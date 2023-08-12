@@ -17,6 +17,7 @@
 #include <mutex>  // NOLINT
 #include <unordered_map>
 #include <vector>
+#include <iostream>
 
 #include "common/config.h"
 #include "common/macros.h"
@@ -132,14 +133,88 @@ class LRUKReplacer {
    */
   auto Size() -> size_t;
 
+  /**
+   * @brief Get the current logical timestamp
+   * 
+   * @return size_t The current logical timestamp
+   */
+  size_t GetTimestamp() {
+    return current_timestamp_;
+  }
+
+  /**
+   * @brief Get the current logical timestamp and increment it by 1
+   * @return size_t The current logical timestamp
+   */
+  size_t GetAndIncrementTimestamp() {
+    return current_timestamp_++;
+  }
+
+  /**
+   * A frame inside the LRUK Replacer.
+   */
+  class Frame {
+   public:
+    explicit Frame(frame_id_t frame_id, size_t list_capacity, LRUKReplacer* replacer);
+
+    DISALLOW_COPY_AND_MOVE(Frame);
+
+    /**
+     * @brief Insert a timestamp to the front of access_timestamp_list_, 
+     * remove the element at the back if size exceeds k_.
+     * @param timestamp 
+     */
+    void InsertTimestamp(size_t timestamp);
+
+    /** @brief Get the frame id. */
+    inline auto GetFrameId() const -> frame_id_t {return frame_id_;}
+
+    /** @brief Check if the frame is evictable. */
+    inline auto IsEvictable() const -> bool {return evictable_;}
+
+    /** @brief Set the evictable_ status of the frame. */
+    inline void SetFrameEvictable(bool set_evictable) {evictable_ = set_evictable;}
+
+    /** @brief Check if the frame has at least k access timestamps. */
+    inline auto HasAtLeastKTimestamps() const -> bool {return access_timestamp_list_.size() == list_capacity_;}
+
+    /** @brief Get backward k-distance of the frame. */
+    inline auto GetKDistance() const -> size_t {return replacer_->GetTimestamp() - access_timestamp_list_.back();}
+
+   private:
+    frame_id_t frame_id_;
+    // Insert new timestamp to the front.
+    // Contains k_ most recent access timestamps.
+    std::list<size_t> access_timestamp_list_;
+    size_t list_capacity_; // k_
+    bool evictable_;
+
+    LRUKReplacer* replacer_;
+  };
+
  private:
   // TODO(student): implement me! You can replace these member variables as you like.
   // Remove maybe_unused if you start using them.
-  [[maybe_unused]] size_t current_timestamp_{0};
-  [[maybe_unused]] size_t curr_size_{0};
-  [[maybe_unused]] size_t replacer_size_;
-  [[maybe_unused]] size_t k_;
-  std::mutex latch_;
+  size_t current_timestamp_{0}; // Logical timestamp, increment by 1 for every access
+  size_t curr_size_{0}; // The current number of evictable frames
+  size_t replacer_size_; // The max number of frames
+  size_t k_;
+  mutable std::mutex latch_;
+
+  /**
+   * A doubly linked list containing all frames.
+   * Always evict frame from front of the list.
+   * 
+   * The list can be divided into 2 parts:
+   * 1. The part near the front contains frames with less than k access timestamps
+   * which should be evicted first, ordered based on "k-distance".
+   * 2. The part near the back contains frames with at least k access timestamps,
+   * ordered based on k-distance.
+   */
+  std::list<std::shared_ptr<Frame>> frame_list_;
+
+  // Maps frame id to Frame for fast lookup, store iterator as key
+  std::unordered_map<frame_id_t, std::list<std::shared_ptr<Frame>>::iterator> frame_map_;
 };
 
 }  // namespace bustub
