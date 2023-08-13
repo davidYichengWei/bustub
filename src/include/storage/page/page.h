@@ -78,6 +78,13 @@ class Page {
   /** Zeroes out the data that is held within the page. */
   inline void ResetMemory() { memset(data_, OFFSET_PAGE_START, BUSTUB_PAGE_SIZE); }
 
+  /** Reset the page's metadata. */
+  inline void ResetMetadata() {
+    page_id_ = INVALID_PAGE_ID;
+    pin_count_ = 0;
+    is_dirty_ = false;
+  }
+
   /** The actual data that is stored within a page. */
   char data_[BUSTUB_PAGE_SIZE]{};
   /** The ID of this page. */

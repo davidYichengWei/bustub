@@ -63,9 +63,10 @@ class BufferPoolManagerInstance : public BufferPoolManager {
    * first), and then call the AllocatePage() method to get a new page id. If the replacement frame has a dirty page,
    * you should write it back to the disk first. You also need to reset the memory and metadata for the new page.
    *
-   * Remember to "Pin" the frame by calling replacer.SetEvictable(frame_id, false)
+   * Remember to "Pin" the frame by calling replacer.SetEvictable(frame_id, false),
    * so that the replacer wouldn't evict the frame before the buffer pool manager "Unpin"s it.
    * Also, remember to record the access history of the frame in the replacer for the lru-k algorithm to work.
+   * Also need to increment the page's pin_count_
    *
    * @param[out] page_id id of created page
    * @return nullptr if no new pages could be created, otherwise pointer to new page
@@ -84,6 +85,7 @@ class BufferPoolManagerInstance : public BufferPoolManager {
    * to disk and update the metadata of the new page
    *
    * In addition, remember to disable eviction and record the access history of the frame like you did for NewPgImp().
+   * Also need to increment the page's pin_count_
    *
    * @param page_id id of page to be fetched
    * @return nullptr if page_id cannot be fetched, otherwise pointer to the requested page
@@ -140,6 +142,18 @@ class BufferPoolManagerInstance : public BufferPoolManager {
    */
   auto DeletePgImp(page_id_t page_id) -> bool override;
 
+  /**
+   * @brief Find a free frame in the buffer pool. Use one in the free list if it has one, otherwise try evict a frame.
+   * When evicting a frame, write the page at the frame to the disk if it's dirty, remove the frame from the replacer, 
+   * remove the page from the page table, and reset both the data and metadata of the page at the frame.
+   * If all frames are not evictable, return false.
+   * 
+   * @param frame_id id of the free frame
+   * @return true if a free frame is found
+   * @return false no free frame can be found
+   */
+  auto FindFreeFrame(frame_id_t &frame_id) -> bool;
+
   /** Number of pages in the buffer pool. */
   const size_t pool_size_;
   /** The next page id to be allocated  */
@@ -148,7 +162,7 @@ class BufferPoolManagerInstance : public BufferPoolManager {
   const size_t bucket_size_ = 4;
 
   /** Array of buffer pool pages. */
-  Page *pages_;
+  Page *pages_; // frame_id is the index in pages_ array
   /** Pointer to the disk manager. */
   DiskManager *disk_manager_ __attribute__((__unused__));
   /** Pointer to the log manager. Please ignore this for P1. */

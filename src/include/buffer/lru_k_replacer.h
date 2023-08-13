@@ -134,23 +134,6 @@ class LRUKReplacer {
   auto Size() -> size_t;
 
   /**
-   * @brief Get the current logical timestamp
-   * 
-   * @return size_t The current logical timestamp
-   */
-  size_t GetTimestamp() {
-    return current_timestamp_;
-  }
-
-  /**
-   * @brief Get the current logical timestamp and increment it by 1
-   * @return size_t The current logical timestamp
-   */
-  size_t GetAndIncrementTimestamp() {
-    return current_timestamp_++;
-  }
-
-  /**
    * A frame inside the LRUK Replacer.
    */
   class Frame {
@@ -215,6 +198,23 @@ class LRUKReplacer {
 
   // Maps frame id to Frame for fast lookup, store iterator as key
   std::unordered_map<frame_id_t, std::list<std::shared_ptr<Frame>>::iterator> frame_map_;
+
+  /**
+   * @brief Get the current logical timestamp
+   * 
+   * @return size_t The current logical timestamp
+   */
+  size_t GetTimestamp() {
+    return current_timestamp_;
+  }
+
+  /**
+   * @brief Get the current logical timestamp and increment it by 1
+   * @return size_t The current logical timestamp
+   */
+  size_t GetAndIncrementTimestamp() {
+    return current_timestamp_++;
+  }
 };
 
 }  // namespace bustub
