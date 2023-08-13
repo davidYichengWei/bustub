@@ -177,7 +177,9 @@ auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Insert(const K &key, const V &value) -> bool {
-  if (IsFull()) return false;
+  if (IsFull()) {
+    return false;
+  }
 
   for (auto &[k, v] : list_) {
     if (key == k) {

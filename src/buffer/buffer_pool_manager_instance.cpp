@@ -39,12 +39,10 @@ BufferPoolManagerInstance::~BufferPoolManagerInstance() {
 
 auto BufferPoolManagerInstance::FindFreeFrame(frame_id_t &frame_id) -> bool {
   // Try use a free frame
-  if (free_list_.size() > 0) {
+  if (!free_list_.empty()) {
     frame_id = free_list_.back();
     free_list_.pop_back();
-  }
-  // Try evict a frame if no free frame
-  else {
+  } else {  // Try evict a frame if no free frame
     if (!replacer_->Evict(&frame_id)) {
       return false;
     }

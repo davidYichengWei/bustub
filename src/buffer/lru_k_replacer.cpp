@@ -45,7 +45,7 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id) {
   }
 
   // Update access_timestamp_list_
-  std::list<std::shared_ptr<Frame>>::iterator frame_iterator = frame_map_[frame_id];
+  auto frame_iterator = frame_map_[frame_id];
   (*frame_iterator)->InsertTimestamp(GetAndIncrementTimestamp());
 
   // Determine the number of positions to move the frame backward
@@ -65,7 +65,7 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id) {
   }
 
   // Move the frame in frame_list_
-  std::list<std::shared_ptr<Frame>>::iterator target_position = frame_iterator;
+  auto target_position = frame_iterator;
   std::advance(target_position, move_count);
   frame_list_.splice(target_position, frame_list_, frame_iterator);
 }

@@ -15,6 +15,7 @@
 #include <iostream>
 #include <limits>
 #include <list>
+#include <memory>
 #include <mutex>  // NOLINT
 #include <unordered_map>
 #include <vector>
@@ -204,13 +205,13 @@ class LRUKReplacer {
    *
    * @return size_t The current logical timestamp
    */
-  size_t GetTimestamp() { return current_timestamp_; }
+  auto GetTimestamp() -> size_t { return current_timestamp_; }
 
   /**
    * @brief Get the current logical timestamp and increment it by 1
    * @return size_t The current logical timestamp
    */
-  size_t GetAndIncrementTimestamp() { return current_timestamp_++; }
+  auto GetAndIncrementTimestamp() -> size_t { return current_timestamp_++; }
 };
 
 }  // namespace bustub
