@@ -37,7 +37,7 @@ auto ExtendibleHashTable<K, V>::IndexOf(const K &key) -> size_t {
 // Because the internal function might be called by other functions who already acquired the latch
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::GetGlobalDepth() const -> int {
-  std::scoped_lock<std::mutex> lock(latch_); // scoped_lock antuoatically unlocks when it goes out of scope
+  std::scoped_lock<std::mutex> lock(latch_);  // scoped_lock antuoatically unlocks when it goes out of scope
   return GetGlobalDepthInternal();
 }
 
@@ -88,7 +88,7 @@ template <typename K, typename V>
 void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
   std::scoped_lock<std::mutex> lock(latch_);
 
-  V v; // Dummy V for calling Find
+  V v;  // Dummy V for calling Find
   if (dir_[IndexOf(key)]->Find(key, v)) {
     dir_[IndexOf(key)]->Insert(key, value);
     return;
@@ -96,8 +96,8 @@ void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
 
   while (dir_[IndexOf(key)]->IsFull()) {
     std::shared_ptr<Bucket> old_bucket = dir_[IndexOf(key)];
-    
-    // 1. If the local depth of the bucket is equal to the global depth, 
+
+    // 1. If the local depth of the bucket is equal to the global depth,
     // increment the global depth and double the size of the directory.
     if (global_depth_ == old_bucket->GetDepth()) {
       global_depth_++;
@@ -114,19 +114,18 @@ void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
     num_buckets_++;
 
     // Redistribute kv pairs
-    std::list<std::pair<K, V>>& old_bucket_item_list = old_bucket->GetItems(); // Use reference
-    std::list<std::pair<K, V>>& new_bucket_item_list = new_bucket->GetItems();
+    std::list<std::pair<K, V>> &old_bucket_item_list = old_bucket->GetItems();  // Use reference
+    std::list<std::pair<K, V>> &new_bucket_item_list = new_bucket->GetItems();
     // Use bitwise & to check the new bit taken into account by the bucket
-    int mask = 1 << (old_bucket->GetDepth() - 1); 
+    int mask = 1 << (old_bucket->GetDepth() - 1);
     for (auto it = old_bucket_item_list.begin(); it != old_bucket_item_list.end();) {
       size_t key_hash = std::hash<K>()(it->first);
       if (static_cast<bool>(key_hash & mask)) {
         new_bucket_item_list.push_back(std::move(*it));
         // erase invalidates it, need to assign the return value of erase back to it,
         // which points to the element after the deleted one
-        it = old_bucket_item_list.erase(it); 
-      }
-      else {
+        it = old_bucket_item_list.erase(it);
+      } else {
         it++;
       }
     }
@@ -141,7 +140,7 @@ void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
         dir_[i] = new_bucket;
       }
       // mask is 2^(new_local_depth - 1), which is the distance between 2 cells containing the same bucket
-      i += mask; 
+      i += mask;
     }
   }
 
@@ -178,9 +177,8 @@ auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Insert(const K &key, const V &value) -> bool {
-  if (IsFull())
-    return false;
-  
+  if (IsFull()) return false;
+
   for (auto &[k, v] : list_) {
     if (key == k) {
       v = value;

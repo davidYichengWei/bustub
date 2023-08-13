@@ -104,7 +104,7 @@ auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * {
   pages_[frame_id].pin_count_++;
   replacer_->RecordAccess(frame_id);
   replacer_->SetEvictable(frame_id, false);
-  
+
   return &pages_[frame_id];
 }
 

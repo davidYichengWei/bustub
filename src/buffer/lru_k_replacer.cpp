@@ -56,8 +56,7 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id) {
     if (!(*frame_iterator)->HasAtLeastKTimestamps() && (*frame_to_compare)->HasAtLeastKTimestamps()) {
       break;
     }
-    if ((*frame_iterator)->HasAtLeastKTimestamps() && 
-        (*frame_to_compare)->HasAtLeastKTimestamps() && 
+    if ((*frame_iterator)->HasAtLeastKTimestamps() && (*frame_to_compare)->HasAtLeastKTimestamps() &&
         (*frame_iterator)->GetKDistance() > (*frame_to_compare)->GetKDistance()) {
       break;
     }
@@ -83,8 +82,7 @@ void LRUKReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
   if (frame->IsEvictable() && !set_evictable) {
     frame->SetFrameEvictable(set_evictable);
     curr_size_--;
-  }
-  else if (!frame->IsEvictable() && set_evictable) {
+  } else if (!frame->IsEvictable() && set_evictable) {
     frame->SetFrameEvictable(set_evictable);
     curr_size_++;
   }
@@ -112,8 +110,8 @@ auto LRUKReplacer::Size() -> size_t { return curr_size_; }
 // Frame
 //===--------------------------------------------------------------------===//
 
-LRUKReplacer::Frame::Frame(frame_id_t frame_id, size_t list_capacity, LRUKReplacer* replacer)
-  : frame_id_(frame_id), list_capacity_(list_capacity), evictable_(true), replacer_(replacer) {}
+LRUKReplacer::Frame::Frame(frame_id_t frame_id, size_t list_capacity, LRUKReplacer *replacer)
+    : frame_id_(frame_id), list_capacity_(list_capacity), evictable_(true), replacer_(replacer) {}
 
 void LRUKReplacer::Frame::InsertTimestamp(size_t timestamp) {
   if (access_timestamp_list_.size() >= list_capacity_) {

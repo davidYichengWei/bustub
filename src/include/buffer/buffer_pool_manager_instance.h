@@ -144,10 +144,10 @@ class BufferPoolManagerInstance : public BufferPoolManager {
 
   /**
    * @brief Find a free frame in the buffer pool. Use one in the free list if it has one, otherwise try evict a frame.
-   * When evicting a frame, write the page at the frame to the disk if it's dirty, remove the frame from the replacer, 
+   * When evicting a frame, write the page at the frame to the disk if it's dirty, remove the frame from the replacer,
    * remove the page from the page table, and reset both the data and metadata of the page at the frame.
    * If all frames are not evictable, return false.
-   * 
+   *
    * @param frame_id id of the free frame
    * @return true if a free frame is found
    * @return false no free frame can be found
@@ -162,7 +162,7 @@ class BufferPoolManagerInstance : public BufferPoolManager {
   const size_t bucket_size_ = 4;
 
   /** Array of buffer pool pages. */
-  Page *pages_; // frame_id is the index in pages_ array
+  Page *pages_;  // frame_id is the index in pages_ array
   /** Pointer to the disk manager. */
   DiskManager *disk_manager_ __attribute__((__unused__));
   /** Pointer to the log manager. Please ignore this for P1. */
