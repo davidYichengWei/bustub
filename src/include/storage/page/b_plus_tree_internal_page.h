@@ -31,6 +31,8 @@ namespace bustub {
  *  --------------------------------------------------------------------------
  * | HEADER | KEY(1)+PAGE_ID(1) | KEY(2)+PAGE_ID(2) | ... | KEY(n)+PAGE_ID(n) |
  *  --------------------------------------------------------------------------
+ * KEY(1) is invalid, but PAGE_ID(1) is valid.
+ * PAGE_ID(1) < KEY(2), KEY(2) <= PAGE_ID(2) < KEY(3), ..., KEY(n) <= PAGE_ID(n)
  */
 INDEX_TEMPLATE_ARGUMENTS
 class BPlusTreeInternalPage : public BPlusTreePage {
@@ -39,11 +41,19 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   void Init(page_id_t page_id, page_id_t parent_id = INVALID_PAGE_ID, int max_size = INTERNAL_PAGE_SIZE);
 
   auto KeyAt(int index) const -> KeyType;
-  void SetKeyAt(int index, const KeyType &key);
   auto ValueAt(int index) const -> ValueType;
+  void SetKeyAt(int index, const KeyType &key);
+  void SetValueAt(int index, const ValueType &value);
+  void SetKeyValueAt(int index, const KeyType &key, const ValueType &value);
+  auto InsertKeyValuePair(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> bool;
+  void SplitData(B_PLUS_TREE_INTERNAL_PAGE_TYPE *destination_page);
 
  private:
-  // Flexible array member for page data.
+  /**
+   * Flexible array member for page data.
+   * When declared as the last member of a class, it automatically uses the remaining space allocated
+   * for the class. This is commonly used to declare arrays of unknown size.
+   */
   MappingType array_[1];
 };
 }  // namespace bustub

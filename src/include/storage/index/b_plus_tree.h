@@ -42,16 +42,39 @@ class BPlusTree {
   explicit BPlusTree(std::string name, BufferPoolManager *buffer_pool_manager, const KeyComparator &comparator,
                      int leaf_max_size = LEAF_PAGE_SIZE, int internal_max_size = INTERNAL_PAGE_SIZE);
 
-  // Returns true if this B+ tree has no keys and values.
+  /**
+   * @brief Check if the B+ tree is empty
+   * 
+   * @return true if the B+ tree contains no key-value pairs
+   * @return false otherwise
+   */
   auto IsEmpty() const -> bool;
 
-  // Insert a key-value pair into this B+ tree.
+  /**
+   * @brief Insert a key-value pair into the B+ tree.
+   * If current tree is empty, start new tree, update root page id and insert
+   * entry, otherwise insert into leaf page.
+   * 
+   * @param key the key to insert
+   * @param value the value to insert
+   * @param transaction ignore for project 2
+   * @return true if insert successfully
+   * @return false if the key already exists
+   */
   auto Insert(const KeyType &key, const ValueType &value, Transaction *transaction = nullptr) -> bool;
 
   // Remove a key and its value from this B+ tree.
   void Remove(const KeyType &key, Transaction *transaction = nullptr);
 
-  // return the value associated with a given key
+  /**
+   * @brief Get the record id associated with a given key
+   * 
+   * @param key the key to search for
+   * @param[out] result a vector container to store the record id
+   * @param transaction ignore for project 2
+   * @return true key is found
+   * @return false key not found
+   */
   auto GetValue(const KeyType &key, std::vector<ValueType> *result, Transaction *transaction = nullptr) -> bool;
 
   // return the page id of the root node
@@ -81,6 +104,60 @@ class BPlusTree {
   void ToGraph(BPlusTreePage *page, BufferPoolManager *bpm, std::ofstream &out) const;
 
   void ToString(BPlusTreePage *page, BufferPoolManager *bpm) const;
+
+  /**
+   * @brief Find the leaf page that might contain the key
+   * 
+   * @param key the key to search for
+   * @return LeafPage* a pointer to the leaf page
+   */
+  auto FindLeafPage(const KeyType &key) const -> LeafPage *;
+
+  /**
+   * @brief Split the leaf page by creating a new leaf page and moving the second half of the key-value pairs to the new page.
+   * Need to set the next_page_id_ attribute of the old page.
+   * 
+   * @param leaf_page the leaf page to be splitted
+   * @return LeafPage* a pointer to the new leaf page, remember to Unpin it later!
+   */
+  auto SplitLeafPage(LeafPage *leaf_page) -> LeafPage *;
+
+  /**
+   * @brief Split the internal page by creating a new internal page and moving the second half of the key-value pairs to the new page.
+   * Need to update the parent_page_id of all pages under the new internal page.
+   * 
+   * @param internal_page the internal page to be splitted
+   * @return InternalPage* a pointer to the new internal page, remember to Unpin it later!
+   */
+  auto SplitInternalPage(InternalPage *internal_page) -> InternalPage *;
+
+  /**
+   * @brief Insert a kv pair (right_page_key, right_page_id) into an internal page.
+   * Case 1: internal_page_id is INVALID_PAGE_ID 
+   * - Create a new internal page, set it as the new root.
+   * - Insert both left_page_id and the kv pair.
+   * - Update the parent_page_id field of both left page and right page.
+   * - Unpin all 3 pages.
+   * 
+   * Case 2: page with internal_page_id is not full
+   * - Insert the right page kv pair in sorted order.
+   * - Unpin the internal page.
+   * 
+   * Case 3: page with internal_page_id is full
+   * - Split the internal page.
+   * - Call InsertIntoInternalPage recursively to insert the relevant information, where the 
+   * left_page_id is the old internal_page_id, right_page_key is the key at index 0 of the new
+   * right page, and right_page_id is the id of the new right page. Here copying up and pushing 
+   * up the middle key is the same operation, as we are not using the key at index 0 of an internal page.
+   * - Insert the original kv pair into the correct internal page after the split.
+   * - Unpin internal_page and new_internal_page.
+   * 
+   * @param internal_page_id id of the target internal page
+   * @param left_page_id the id of the left page after split
+   * @param right_page_key the key at index 0 of the right page after split
+   * @param right_page_id the id of the right page after split
+   */
+  void InsertIntoInternalPage(page_id_t internal_page_id, page_id_t left_page_id, KeyType right_page_key, page_id_t right_page_id);
 
   // member variable
   std::string index_name_;

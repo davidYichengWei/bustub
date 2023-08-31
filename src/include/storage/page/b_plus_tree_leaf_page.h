@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "common/rid.h"
 #include "storage/page/b_plus_tree_page.h"
 
 namespace bustub {
@@ -49,6 +50,11 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
   auto KeyAt(int index) const -> KeyType;
+  auto ValueAt(int index) const -> ValueType;
+  auto KeyValueAt(int index) -> MappingType &;
+  void SetKeyValueAt(int index, const KeyType &key, const ValueType &value);
+  auto InsertKeyValuePair(const KeyType &key, const ValueType &value, const KeyComparator &comparator, bool &duplicate) -> bool;
+  void SplitData(B_PLUS_TREE_LEAF_PAGE_TYPE *destination_page);
 
  private:
   page_id_t next_page_id_;
