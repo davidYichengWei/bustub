@@ -55,6 +55,12 @@ class BPlusTree {
    * If current tree is empty, start new tree, update root page id and insert
    * entry, otherwise insert into leaf page.
    * 
+   * You should correctly perform splits if insertion triggers the splitting condition 
+   * (number of key/value pairs AFTER insertion equals to max_size for leaf nodes, 
+   * number of children BEFORE insertion equals to max_size for internal nodes). 
+   * Since any write operation could lead to the change of root_page_id in B+Tree index, 
+   * it is your responsibility to update root_page_id in the header page
+   * 
    * @param key the key to insert
    * @param value the value to insert
    * @param transaction ignore for project 2
@@ -63,7 +69,13 @@ class BPlusTree {
    */
   auto Insert(const KeyType &key, const ValueType &value, Transaction *transaction = nullptr) -> bool;
 
-  // Remove a key and its value from this B+ tree.
+  /**
+   * @brief Remove a kv pair from the B+ tree.
+   * 
+   * 
+   * @param key 
+   * @param transaction 
+   */
   void Remove(const KeyType &key, Transaction *transaction = nullptr);
 
   /**

@@ -77,10 +77,10 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::SetKeyValueAt(int index, const KeyType &key, co
 
 INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::InsertKeyValuePair(const KeyType &key, const ValueType &value, 
-                                                    const KeyComparator &comparator, bool &duplicate) -> bool {
+                                                    const KeyComparator &comparator) -> bool {
   int max_size = GetMaxSize();
   if (GetSize() >= max_size) {
-    return false;
+    throw std::logic_error("Leaf node is full before insert");
   }
 
   // Perform binary search to find the index to insert
@@ -89,7 +89,6 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::InsertKeyValuePair(const KeyType &key, const Va
   while (left <= right) {
     int mid = (left + right) / 2;
     if (comparator(array_[mid].first, key) == 0) {
-      duplicate = true;
       return false;
     }
     else if (comparator(array_[mid].first, key) > 0) {

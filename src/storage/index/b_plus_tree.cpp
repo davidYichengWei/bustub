@@ -67,9 +67,7 @@ INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transaction *transaction) -> bool {
   // Create or find the leaf page to insert
   LeafPage *leaf_page;
-  bool new_page = false;
   if (IsEmpty()) {
-    new_page = true;
     // Allocate and initialize a new leaf page
     page_id_t root_page_id;
     auto *page = buffer_pool_manager_->NewPage(&root_page_id);
@@ -87,35 +85,20 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
     leaf_page = FindLeafPage(key);
   }
 
-  // If has enough space, just insert
-  bool duplicate = false;
-  if (leaf_page->InsertKeyValuePair(key, value, comparator_, duplicate)) {
-    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
-    return true;
-  }
-  if (duplicate) {
-    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), new_page);
+  // If insertion failed, it's a duplicate
+  if (!leaf_page->InsertKeyValuePair(key, value, comparator_)) {
+    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), false);
     return false;
   }
 
-  // Split the leaf page and move half of its data
-  LeafPage *new_leaf_page = SplitLeafPage(leaf_page);
+  // If leaf node doesn't reach max_size after insert, just return
+  if (leaf_page->GetSize() < leaf_page->GetMaxSize()) {
+    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+    return true;
+  }
 
-  // Insert the kv pair into the correct leaf page
-  if (comparator_(key, new_leaf_page->KeyAt(0)) < 0) {
-    if (!leaf_page->InsertKeyValuePair(key, value, comparator_, duplicate)) {
-      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
-      buffer_pool_manager_->UnpinPage(new_leaf_page->GetPageId(), true);
-      throw std::runtime_error("Insertion failed even after split");
-    }
-  }
-  else {
-    if (!new_leaf_page->InsertKeyValuePair(key, value, comparator_, duplicate)) {
-      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
-      buffer_pool_manager_->UnpinPage(new_leaf_page->GetPageId(), true);
-      throw std::runtime_error("Insertion failed even after split");
-    }
-  }
+  // Leaf page is full, need to split the leaf page and move half of its data
+  LeafPage *new_leaf_page = SplitLeafPage(leaf_page);
 
   // Insert the first key of the new page to its parent page
   InsertIntoInternalPage(leaf_page->GetParentPageId(), leaf_page->GetPageId(), new_leaf_page->KeyAt(0), new_leaf_page->GetPageId());
@@ -499,7 +482,7 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(page_id_t internal_page_id, page_id_
     new_internal_page->Init(internal_page_id);
 
     root_page_id_ = internal_page_id;
-    UpdateRootPageId(1);
+    UpdateRootPageId();
 
     // Insert both left_page_id and the kv pair
     new_internal_page->SetValueAt(0, left_page_id);
