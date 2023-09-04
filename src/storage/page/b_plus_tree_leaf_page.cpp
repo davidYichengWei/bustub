@@ -16,7 +16,7 @@
 
 namespace bustub {
 
-#define ARRAY_INDEX_CHECK if (index < 0 || index >= GetMaxSize()) throw std::out_of_range("index out of range")
+#define ARRAY_INDEX_CHECK if (index < 0 || index >= GetSize()) throw std::out_of_range("index out of range")
 
 /*****************************************************************************
  * HELPER METHODS AND UTILITIES
@@ -70,13 +70,13 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::KeyValueAt(int index) -> MappingType &{
 
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::SetKeyValueAt(int index, const KeyType &key, const ValueType &value) {
-  ARRAY_INDEX_CHECK;
+  if (index < 0 || index >= GetMaxSize()) throw std::out_of_range("index out of range");
   array_[index].first = key;
   array_[index].second = value;
 }
 
 INDEX_TEMPLATE_ARGUMENTS
-auto B_PLUS_TREE_LEAF_PAGE_TYPE::InsertKeyValuePair(const KeyType &key, const ValueType &value, 
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::InsertKeyValuePair(KeyType key, ValueType value, 
                                                     const KeyComparator &comparator) -> bool {
   int max_size = GetMaxSize();
   if (GetSize() >= max_size) {
@@ -118,6 +118,67 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::SplitData(B_PLUS_TREE_LEAF_PAGE_TYPE *destinati
   }
   SetSize(mid_index);
   destination_page->IncreaseSize(GetMaxSize() - mid_index);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::RemoveKeyValuePair(KeyType key, const KeyComparator &comparator) -> bool {
+  int index = -1;
+  int left = 0, right = GetSize() - 1;
+  while (left <= right) {
+    int mid = (left + right) / 2;
+    if (comparator(KeyAt(mid), key) == 0) {
+      index = mid;
+      break;
+    }
+    else if (comparator(KeyAt(mid), key) > 0) {
+      right = mid - 1;
+    }
+    else {
+      left = mid + 1;
+    }
+  }
+  if (index == -1) return false;
+
+  // Just overwrite data
+  std::copy(array_ + index + 1, array_ + GetMaxSize(), array_ + index);
+  DecreaseSize(1);
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::StealFromLeftSibling(B_PLUS_TREE_LEAF_PAGE_TYPE *left_sibling, 
+                                                      const KeyComparator &comparator) -> bool {
+  if (left_sibling->GetSize() <= left_sibling->GetMinSize()) return false;
+
+  // Steal the last element from left_sibling
+  if (!InsertKeyValuePair(
+    left_sibling->KeyAt(left_sibling->GetSize() - 1), left_sibling->ValueAt(left_sibling->GetSize() - 1), comparator)) {
+    throw std::runtime_error("Insertion failed when stealing from left sibling leaf page");
+  }
+
+  // Remove the last element in left_sibling
+  left_sibling->DecreaseSize(1);
+
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::StealFromRightSibling(B_PLUS_TREE_LEAF_PAGE_TYPE *right_sibling, 
+                                                      const KeyComparator &comparator) -> bool {
+  if (right_sibling->GetSize() <= right_sibling->GetMinSize()) return false;
+
+  // Steal the first element from left_sibling
+  if (!InsertKeyValuePair(
+    right_sibling->KeyAt(0), right_sibling->ValueAt(0), comparator)) {
+    throw std::runtime_error("Insertion failed when stealing from left sibling leaf page");
+  }
+
+  // Remove the first element in right_sibling
+  if (!right_sibling->RemoveKeyValuePair(right_sibling->KeyAt(0), comparator)) {
+    throw std::runtime_error("Failed to remove the first element in right_sibling");
+  }
+
+  return true;
 }
 
 template class BPlusTreeLeafPage<GenericKey<4>, RID, GenericComparator<4>>;

@@ -46,7 +46,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   void SetValueAt(int index, const ValueType &value);
   void SetKeyValueAt(int index, const KeyType &key, const ValueType &value);
   auto InsertKeyValuePair(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> bool;
-  void SplitData(B_PLUS_TREE_INTERNAL_PAGE_TYPE *destination_page);
+  auto InsertToTmpVector(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> std::vector<MappingType>;
 
  private:
   /**

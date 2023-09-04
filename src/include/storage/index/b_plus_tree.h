@@ -71,6 +71,9 @@ class BPlusTree {
 
   /**
    * @brief Remove a kv pair from the B+ tree.
+   * If the key is not found, just return.
+   * After removing the kv pair from the leaf page, if the leaf page's size is smaller than
+   * its min_size, need to perform redistribute or merge.
    * 
    * 
    * @param key 
@@ -139,9 +142,10 @@ class BPlusTree {
    * Need to update the parent_page_id of all pages under the new internal page.
    * 
    * @param internal_page the internal page to be splitted
+   * @param kv_pairs_after_insert a vector containing sorted kv pairs after insertion
    * @return InternalPage* a pointer to the new internal page, remember to Unpin it later!
    */
-  auto SplitInternalPage(InternalPage *internal_page) -> InternalPage *;
+  auto SplitInternalPage(InternalPage *internal_page, std::vector<std::pair<KeyType, page_id_t>> kv_pairs_after_insert) -> InternalPage *;
 
   /**
    * @brief Insert a kv pair (right_page_key, right_page_id) into an internal page.

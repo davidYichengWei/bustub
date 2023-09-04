@@ -53,8 +53,15 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto ValueAt(int index) const -> ValueType;
   auto KeyValueAt(int index) -> MappingType &;
   void SetKeyValueAt(int index, const KeyType &key, const ValueType &value);
-  auto InsertKeyValuePair(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> bool;
+
+  // Insert helper
+  auto InsertKeyValuePair(KeyType key, ValueType value, const KeyComparator &comparator) -> bool;
   void SplitData(B_PLUS_TREE_LEAF_PAGE_TYPE *destination_page);
+
+  // Remove helper
+  auto RemoveKeyValuePair(KeyType key, const KeyComparator &comparator) -> bool;
+  auto StealFromLeftSibling(B_PLUS_TREE_LEAF_PAGE_TYPE *left_sibling, const KeyComparator &comparator) -> bool;
+  auto StealFromRightSibling(B_PLUS_TREE_LEAF_PAGE_TYPE *right_sibling, const KeyComparator &comparator) -> bool;
 
  private:
   page_id_t next_page_id_;

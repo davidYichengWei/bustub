@@ -48,7 +48,7 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
       left = mid + 1;
     }
   }
-  
+
   buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), false);
   return found;
 }
@@ -75,7 +75,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
       throw Exception(ExceptionType::OUT_OF_MEMORY, "Failed to allocate new page");
     }
     leaf_page = reinterpret_cast<LeafPage *>(page->GetData());
-    leaf_page->Init(root_page_id);
+    leaf_page->Init(root_page_id, INVALID_PAGE_ID, leaf_max_size_);
 
     // Update root_page_id_
     root_page_id_ = root_page_id;
@@ -120,7 +120,77 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
  * necessary.
  */
 INDEX_TEMPLATE_ARGUMENTS
-void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {}
+void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
+  if (IsEmpty()) return;
+
+  LeafPage *leaf_page = FindLeafPage(key);
+  if (!leaf_page->RemoveKeyValuePair(key, comparator_)) {
+    LOG_INFO("Remove: key not found");
+    return;
+  }
+
+  if (leaf_page->GetSize() >= leaf_page->GetMinSize() || leaf_page->GetParentPageId() == INVALID_PAGE_ID) {
+    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+    return;
+  }
+
+  // Find the index of the leaf page in its parent page
+  InternalPage *parent_page = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(leaf_page->GetParentPageId())->GetData());
+  int index = 0;
+  int left = 1, right = parent_page->GetSize() - 1;
+  KeyType leaf_page_key = leaf_page->KeyAt(0);
+  while (left <= right) {
+    int mid = (left + right) / 2;
+    if (comparator_(parent_page->KeyAt(mid), leaf_page_key) == 0) {
+      index = mid;
+      break;
+    }
+    else if (comparator_(parent_page->KeyAt(mid), leaf_page_key) > 0) {
+      right = mid - 1;
+    }
+    else {
+      left = mid + 1;
+    }
+  }
+
+  // First try steal from its left sibling
+  if (index != 0) {
+    LeafPage *left_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    if (leaf_page->StealFromLeftSibling(left_sibling, comparator_)) {
+      // Update key index in the parent page
+      KeyType new_key = leaf_page->KeyAt(0);
+      parent_page->SetKeyAt(index, new_key);
+
+      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
+      return;
+    }
+  }
+
+  // Then try steal from its right sibling
+  if (index < parent_page->GetSize() - 1) {
+    LeafPage *right_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    if (leaf_page->StealFromRightSibling(right_sibling, comparator_)) {
+      // Update the key index of its right sibling in the parent page
+      KeyType new_key = right_sibling->KeyAt(0);
+      parent_page->SetKeyAt(index + 1, new_key);
+
+      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(right_sibling->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
+      return;
+    }
+  }
+
+
+  // Try merge with its left sibling, call resursive helper function
+
+
+  // Try merge with its right sibling, call resursive helper function
+
+
+}
 
 /*****************************************************************************
  * INDEX ITERATOR
@@ -410,7 +480,7 @@ auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key) const -> LeafPage * {
   auto *page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(root_page_id_)->GetData());
   while (!page->IsLeafPage()) {
     auto *internal_page = reinterpret_cast<InternalPage *>(page);
-    
+
     // Find the index of the first key that is greater than the given key
     int index = internal_page->GetSize();
     int left = 1, right = internal_page->GetSize() - 1;
@@ -424,8 +494,8 @@ auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key) const -> LeafPage * {
       }
     }
 
-    buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), false);
     page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(internal_page->ValueAt(index - 1))->GetData());
+    buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), false);
   }
   return reinterpret_cast<LeafPage *>(page);
 }
@@ -438,7 +508,8 @@ auto BPLUSTREE_TYPE::SplitLeafPage(LeafPage *leaf_page) -> LeafPage * {
     throw Exception(ExceptionType::OUT_OF_MEMORY, "Failed to allocate new page");
   }
   auto *new_leaf_page = reinterpret_cast<LeafPage *>(page->GetData());
-  new_leaf_page->Init(new_page_id, leaf_page->GetParentPageId());
+  new_leaf_page->Init(new_page_id, leaf_page->GetParentPageId(), leaf_max_size_);
+  new_leaf_page->SetNextPageId(leaf_page->GetNextPageId());
 
   leaf_page->SetNextPageId(new_page_id);
   leaf_page->SplitData(new_leaf_page);
@@ -447,22 +518,32 @@ auto BPLUSTREE_TYPE::SplitLeafPage(LeafPage *leaf_page) -> LeafPage * {
 }
 
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::SplitInternalPage(InternalPage *internal_page) -> InternalPage * {
+auto BPLUSTREE_TYPE::SplitInternalPage(InternalPage *internal_page, 
+                                       std::vector<std::pair<KeyType, page_id_t>> kv_pairs_after_insert) -> InternalPage * {
   page_id_t new_page_id;
   auto *page = buffer_pool_manager_->NewPage(&new_page_id);
   if (page == nullptr) {
     throw Exception(ExceptionType::OUT_OF_MEMORY, "Failed to allocate new page");
   }
   auto *new_internal_page = reinterpret_cast<InternalPage *>(page->GetData());
-  new_internal_page->Init(new_page_id, internal_page->GetParentPageId());
+  new_internal_page->Init(new_page_id, internal_page->GetParentPageId(), internal_max_size_);
 
-  internal_page->SplitData(new_internal_page);
+  // Split data
+  int mid_index = internal_page->GetMinSize();
+  for (int i = 0; i < mid_index; i++) {
+    internal_page->SetKeyValueAt(i, kv_pairs_after_insert[i].first, kv_pairs_after_insert[i].second);
+  }
+  internal_page->SetSize(mid_index);
+  for (size_t i = mid_index, j = 0; i < kv_pairs_after_insert.size(); i++, j++) {
+    new_internal_page->SetKeyValueAt(j, kv_pairs_after_insert[i].first, kv_pairs_after_insert[i].second);
+  }
+  new_internal_page->SetSize(kv_pairs_after_insert.size() - mid_index);
 
-  // Update parent_page_id
+  // Update parent_page_id of children of new internal page
   for (int i = 0; i < new_internal_page->GetSize(); i++) {
     page_id_t child_page_id = new_internal_page->ValueAt(i);
-    auto child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(child_page_id)->GetData());
-    child_page->SetParentPageId(new_internal_page->GetParentPageId());
+    auto *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(child_page_id)->GetData());
+    child_page->SetParentPageId(new_internal_page->GetPageId());
     buffer_pool_manager_->UnpinPage(child_page_id, true);
   }
 
@@ -471,7 +552,7 @@ auto BPLUSTREE_TYPE::SplitInternalPage(InternalPage *internal_page) -> InternalP
 
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::InsertIntoInternalPage(page_id_t internal_page_id, page_id_t left_page_id, KeyType right_page_key, page_id_t right_page_id) {
-  // Case 1: internal_page_id is INVALID_PAGE_ID 
+  // Case 1: internal_page_id is INVALID_PAGE_ID
   if (internal_page_id == INVALID_PAGE_ID) {
     // Create a new internal page, set it as the new root
     auto *page = buffer_pool_manager_->NewPage(&internal_page_id);
@@ -479,14 +560,15 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(page_id_t internal_page_id, page_id_
       throw Exception(ExceptionType::OUT_OF_MEMORY, "Failed to allocate new page");
     }
     auto *new_internal_page = reinterpret_cast<InternalPage *>(page->GetData());
-    new_internal_page->Init(internal_page_id);
+    new_internal_page->Init(internal_page_id, INVALID_PAGE_ID, internal_max_size_);
 
     root_page_id_ = internal_page_id;
     UpdateRootPageId();
 
     // Insert both left_page_id and the kv pair
     new_internal_page->SetValueAt(0, left_page_id);
-    new_internal_page->SetKeyValueAt(0, right_page_key, right_page_id);
+    new_internal_page->SetKeyValueAt(1, right_page_key, right_page_id);
+    new_internal_page->IncreaseSize(2);
 
     // Update the parent_page_id field of both left page and right page
     auto *left_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(left_page_id)->GetData());
@@ -509,27 +591,13 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(page_id_t internal_page_id, page_id_
   }
 
   // Case 3: page with internal_page_id is full
-  // Split the internal page
-  InternalPage *new_internal_page = SplitInternalPage(internal_page);
+  // Store kv pairs after insertion in a vector
+  std::vector<std::pair<KeyType, page_id_t>> kv_pairs_after_insert = internal_page->InsertToTmpVector(right_page_key, right_page_id, comparator_);
+  // Create a new internal page, split data in vec into 2 pages
+  InternalPage *new_internal_page = SplitInternalPage(internal_page, kv_pairs_after_insert);
 
   // Insert the new middle key
   InsertIntoInternalPage(internal_page->GetParentPageId(), internal_page->GetPageId(), new_internal_page->KeyAt(0), new_internal_page->GetPageId());
-
-  // Insert the original kv pair into the correct internal page after the split
-  if (comparator_(right_page_key, new_internal_page->KeyAt(0)) < 0) {
-    if (!internal_page->InsertKeyValuePair(right_page_key, right_page_id, comparator_)) {
-      buffer_pool_manager_->UnpinPage(internal_page_id, true);
-      buffer_pool_manager_->UnpinPage(new_internal_page->GetPageId(), true);
-      throw std::runtime_error("Insertion failed even after split");
-    }
-  }
-  else {
-    if (!new_internal_page->InsertKeyValuePair(right_page_key, right_page_id, comparator_)) {
-      buffer_pool_manager_->UnpinPage(internal_page_id, true);
-      buffer_pool_manager_->UnpinPage(new_internal_page->GetPageId(), true);
-      throw std::runtime_error("Insertion failed even after split");
-    }
-  }
 
   // Unpin the 2 pages
   buffer_pool_manager_->UnpinPage(internal_page_id, true);
