@@ -136,22 +136,14 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
 
   // Find the index of the leaf page in its parent page
   InternalPage *parent_page = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(leaf_page->GetParentPageId())->GetData());
-  int index = 0;
-  int left = 1, right = parent_page->GetSize() - 1;
-  KeyType leaf_page_key = leaf_page->KeyAt(0);
-  while (left <= right) {
-    int mid = (left + right) / 2;
-    if (comparator_(parent_page->KeyAt(mid), leaf_page_key) == 0) {
-      index = mid;
+  int index = -1;
+  for (int i = 0; i < parent_page->GetSize(); i++) {
+    if (parent_page->ValueAt(i) == leaf_page->GetPageId()) {
+      index = i;
       break;
     }
-    else if (comparator_(parent_page->KeyAt(mid), leaf_page_key) > 0) {
-      right = mid - 1;
-    }
-    else {
-      left = mid + 1;
-    }
   }
+  assert(index != -1);
 
   // First try steal from its left sibling
   if (index != 0) {
@@ -168,7 +160,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
     }
   }
 
-  // Then try steal from its right sibling
+  // Steal from left sibling didn't work, try steal from its right sibling
   if (index < parent_page->GetSize() - 1) {
     LeafPage *right_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
     if (leaf_page->StealFromRightSibling(right_sibling, comparator_)) {
@@ -183,6 +175,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
     }
   }
 
+  LOG_DEBUG("Merge not implemented yet");
 
   // Try merge with its left sibling, call resursive helper function
 

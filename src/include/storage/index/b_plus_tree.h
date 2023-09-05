@@ -160,12 +160,11 @@ class BPlusTree {
    * - Unpin the internal page.
    * 
    * Case 3: page with internal_page_id is full
-   * - Split the internal page.
+   * - Insert and split the internal page.
    * - Call InsertIntoInternalPage recursively to insert the relevant information, where the 
    * left_page_id is the old internal_page_id, right_page_key is the key at index 0 of the new
    * right page, and right_page_id is the id of the new right page. Here copying up and pushing 
    * up the middle key is the same operation, as we are not using the key at index 0 of an internal page.
-   * - Insert the original kv pair into the correct internal page after the split.
    * - Unpin internal_page and new_internal_page.
    * 
    * @param internal_page_id id of the target internal page
