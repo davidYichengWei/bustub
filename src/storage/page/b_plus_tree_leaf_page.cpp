@@ -167,7 +167,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::StealFromRightSibling(B_PLUS_TREE_LEAF_PAGE_TYP
                                                       const KeyComparator &comparator) -> bool {
   if (right_sibling->GetSize() <= right_sibling->GetMinSize()) return false;
 
-  // Steal the first element from left_sibling
+  // Steal the first element from right_sibling
   if (!InsertKeyValuePair(
     right_sibling->KeyAt(0), right_sibling->ValueAt(0), comparator)) {
     throw std::runtime_error("Insertion failed when stealing from left sibling leaf page");
@@ -178,6 +178,19 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::StealFromRightSibling(B_PLUS_TREE_LEAF_PAGE_TYP
     throw std::runtime_error("Failed to remove the first element in right_sibling");
   }
 
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(B_PLUS_TREE_LEAF_PAGE_TYPE *right_sibling) -> bool {
+  // If merge is required, shouldn't need to split after merge
+  if (GetSize() + right_sibling->GetSize() >= GetMaxSize()) {
+    return false;
+  }
+
+  std::copy(right_sibling->array_, right_sibling->array_ + right_sibling->GetSize(), array_ + GetSize());
+  IncreaseSize(right_sibling->GetSize());
+  SetNextPageId(right_sibling->GetNextPageId());
   return true;
 }
 

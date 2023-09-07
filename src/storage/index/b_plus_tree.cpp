@@ -175,14 +175,37 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
     }
   }
 
-  LOG_DEBUG("Merge not implemented yet");
-
   // Try merge with its left sibling, call resursive helper function
+  if (index != 0) {
+    LeafPage *left_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    if (left_sibling->Merge(leaf_page)) {
+      page_id_t page_id_to_remove = leaf_page->GetPageId();
+      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      buffer_pool_manager_->DeletePage(leaf_page->GetPageId());
 
+      RemoveFromInternalPage(left_sibling->GetParentPageId(), page_id_to_remove);
+
+      buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
+      return;
+    }
+  }
 
   // Try merge with its right sibling, call resursive helper function
+  if (index < parent_page->GetSize() - 1) {
+    LeafPage *right_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    if (leaf_page->Merge(right_sibling)) {
+      page_id_t page_id_to_remove = right_sibling->GetPageId();
+      buffer_pool_manager_->UnpinPage(page_id_to_remove, true);
+      buffer_pool_manager_->DeletePage(page_id_to_remove);
 
+      RemoveFromInternalPage(leaf_page->GetParentPageId(), page_id_to_remove);
 
+      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      return;
+    }
+  }
+
+  throw std::runtime_error("Remove failed");
 }
 
 /*****************************************************************************
@@ -595,6 +618,145 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(page_id_t internal_page_id, page_id_
   // Unpin the 2 pages
   buffer_pool_manager_->UnpinPage(internal_page_id, true);
   buffer_pool_manager_->UnpinPage(new_internal_page->GetPageId(), true);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::RemoveFromInternalPage(page_id_t internal_page_id, page_id_t page_id_to_remove) {
+  if (internal_page_id == INVALID_PAGE_ID) throw std::runtime_error("Remove from invalid internal page");
+  InternalPage *internal_page = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(internal_page_id)->GetData());
+
+  if (!internal_page->RemoveKeyValuePair(page_id_to_remove)) {
+    throw std::runtime_error("Failed to remove kv pair from internal page");
+  }
+
+  // Case 1: size >= min_size after removal
+  if (internal_page->GetSize() >= internal_page->GetMinSize()) {
+    buffer_pool_manager_->UnpinPage(internal_page_id, true);
+    return;
+  }
+
+  // Case 2: size < min_size after removal, page is root page
+  if (internal_page_id == root_page_id_) {
+    // size > 1: unpin page and return
+    if (internal_page->GetSize() > 1) {
+      buffer_pool_manager_->UnpinPage(internal_page_id, true);
+      return;
+    }
+
+    // size == 1, set its child as new root, delete page, unpin and return
+    BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(internal_page->ValueAt(0))->GetData());
+    child_page->SetParentPageId(INVALID_PAGE_ID);
+    root_page_id_ = child_page->GetPageId();
+    UpdateRootPageId();
+    buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
+
+    buffer_pool_manager_->UnpinPage(internal_page_id, true);
+    buffer_pool_manager_->DeletePage(internal_page_id);
+    return;
+  }
+
+  // Case 3: size < min_size after removal, page is not root page
+  // Find the index of the internal page in its parent page
+  InternalPage *parent_page = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(internal_page->GetParentPageId())->GetData());
+  int index = -1;
+  for (int i = 0; i < parent_page->GetSize(); i++) {
+    if (parent_page->ValueAt(i) == internal_page->GetPageId()) {
+      index = i;
+      break;
+    }
+  }
+  assert(index != -1);
+
+  // First try steal from its left sibling
+  if (index != 0) {
+    InternalPage *left_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    if (internal_page->StealFromLeftSibling(left_sibling, comparator_)) {
+      // Update key index in the parent page
+      KeyType new_key = internal_page->KeyAt(0);
+      parent_page->SetKeyAt(index, new_key);
+
+      // Update parent_page_id of the child page stolen
+      BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(internal_page->ValueAt(0))->GetData());
+      child_page->SetParentPageId(internal_page->GetPageId());
+
+      buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
+      return;
+    }
+  }
+
+  // Steal from left sibling didn't work, try steal from its right sibling
+  if (index < parent_page->GetSize() - 1) {
+    InternalPage *right_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    if (internal_page->StealFromRightSibling(right_sibling, comparator_)) {
+      // Update the key index of its right sibling in the parent page
+      KeyType new_key = right_sibling->KeyAt(0);
+      parent_page->SetKeyAt(index + 1, new_key);
+
+      // Update parent_page_id of the child page stolen
+      BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(
+        internal_page->ValueAt(internal_page->GetSize() - 1))->GetData());
+      child_page->SetParentPageId(internal_page->GetPageId());
+
+      buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(right_sibling->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
+      return;
+    }
+  }
+
+  // Try merge with its left sibling, call resursive helper function
+  if (index != 0) {
+    InternalPage *left_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    int old_size = left_sibling->GetSize();
+    if (left_sibling->Merge(internal_page)) { // Merge internal_page into left_sibling
+      page_id_t page_id_to_remove = internal_page->GetPageId();
+      buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), true);
+      buffer_pool_manager_->DeletePage(internal_page->GetPageId());
+
+      RemoveFromInternalPage(left_sibling->GetParentPageId(), page_id_to_remove);
+
+      // Update parent_page_id of the child pages merged
+      for (int i = old_size; i < left_sibling->GetSize(); i++) {
+        BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(left_sibling->ValueAt(i))->GetData());
+        child_page->SetParentPageId(left_sibling->GetPageId());
+        buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
+      }
+
+      buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
+      return;
+    }
+  }
+
+  // Try merge with its right sibling, call resursive helper function
+  if (index < parent_page->GetSize() - 1) {
+    InternalPage *right_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    int old_size = internal_page->GetSize();
+    if (internal_page->Merge(right_sibling)) { // Merge right_sibling into internal_page
+      page_id_t page_id_to_remove = right_sibling->GetPageId();
+      buffer_pool_manager_->UnpinPage(page_id_to_remove, true);
+      buffer_pool_manager_->DeletePage(page_id_to_remove);
+
+      RemoveFromInternalPage(internal_page->GetParentPageId(), page_id_to_remove);
+
+      // Update parent_page_id of the child pages merged
+      for (int i = old_size; i < internal_page->GetSize(); i++) {
+        BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(internal_page->ValueAt(i))->GetData());
+        child_page->SetParentPageId(internal_page->GetPageId());
+        buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
+      }
+
+      buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
+      return;
+    }
+  }
+
+  throw std::runtime_error("Remove from internal page failed");
 }
 
 template class BPlusTree<GenericKey<4>, RID, GenericComparator<4>>;

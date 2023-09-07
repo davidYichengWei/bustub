@@ -62,6 +62,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto RemoveKeyValuePair(KeyType key, const KeyComparator &comparator) -> bool;
   auto StealFromLeftSibling(B_PLUS_TREE_LEAF_PAGE_TYPE *left_sibling, const KeyComparator &comparator) -> bool;
   auto StealFromRightSibling(B_PLUS_TREE_LEAF_PAGE_TYPE *right_sibling, const KeyComparator &comparator) -> bool;
+  auto Merge(B_PLUS_TREE_LEAF_PAGE_TYPE *source_page) -> bool;
 
  private:
   page_id_t next_page_id_;

@@ -45,8 +45,17 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   void SetKeyAt(int index, const KeyType &key);
   void SetValueAt(int index, const ValueType &value);
   void SetKeyValueAt(int index, const KeyType &key, const ValueType &value);
+
+  // Insert helper
   auto InsertKeyValuePair(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> bool;
   auto InsertToTmpVector(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> std::vector<MappingType>;
+
+  // Remove helper
+  auto RemoveKeyValuePair(ValueType value_to_remove) -> bool;
+  auto StealFromLeftSibling(B_PLUS_TREE_INTERNAL_PAGE_TYPE *left_sibling, const KeyComparator &comparator) -> bool;
+  auto StealFromRightSibling(B_PLUS_TREE_INTERNAL_PAGE_TYPE *right_sibling, const KeyComparator &comparator) -> bool;
+  auto Merge(B_PLUS_TREE_INTERNAL_PAGE_TYPE *source_page) -> bool;
+  auto PrependKeyValuePair(KeyType key, ValueType value, const KeyComparator &comparator) -> bool;
 
  private:
   /**

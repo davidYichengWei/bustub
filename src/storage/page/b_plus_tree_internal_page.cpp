@@ -148,6 +148,83 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::InsertToTmpVector(const KeyType &key, const
   return result;
 }
 
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::RemoveKeyValuePair(ValueType value_to_remove) -> bool {
+  int index = -1;
+  for (int i = 0; i < GetSize(); i++) {
+    if (array_[i].second == value_to_remove) {
+      index = i;
+      break;
+    }
+  }
+  assert(index != -1);
+
+  // Just overwrite data
+  std::copy(array_ + index + 1, array_ + GetMaxSize(), array_ + index);
+  DecreaseSize(1);
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::StealFromLeftSibling(B_PLUS_TREE_INTERNAL_PAGE_TYPE *left_sibling, 
+                                                          const KeyComparator &comparator) -> bool {
+  if (left_sibling->GetSize() <= left_sibling->GetMinSize()) return false;
+
+  // Steal the last element from left_sibling
+  if (!PrependKeyValuePair(left_sibling->KeyAt(left_sibling->GetSize() - 1), 
+                           left_sibling->ValueAt(left_sibling->GetSize() - 1), comparator)) {
+    throw std::runtime_error("Insertion failed when stealing from left sibling leaf page");
+  }
+
+  // Remove the last element in left_sibling
+  left_sibling->DecreaseSize(1);
+
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::StealFromRightSibling(B_PLUS_TREE_INTERNAL_PAGE_TYPE *right_sibling, 
+                                                           const KeyComparator &comparator) -> bool {
+  if (right_sibling->GetSize() <= right_sibling->GetMinSize()) return false;
+
+  // Steal the first element from right_sibling
+  if (!InsertKeyValuePair(right_sibling->KeyAt(0), right_sibling->ValueAt(0), comparator)) {
+    throw std::runtime_error("Insertion failed when stealing from left sibling leaf page");
+  }
+
+  // Remove the first element in right_sibling
+  if (!right_sibling->RemoveKeyValuePair(right_sibling->ValueAt(0))) {
+    throw std::runtime_error("Failed to remove the first element in right_sibling");
+  }
+
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Merge(B_PLUS_TREE_INTERNAL_PAGE_TYPE *right_sibling) -> bool {
+  // If merge is required, shouldn't need to split after merge
+  if (GetSize() + right_sibling->GetSize() >= GetMaxSize()) {
+    return false;
+  }
+
+  std::copy(right_sibling->array_, right_sibling->array_ + right_sibling->GetSize(), array_ + GetSize());
+  IncreaseSize(right_sibling->GetSize());
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::PrependKeyValuePair(KeyType key, ValueType value, 
+                                                         const KeyComparator &comparator) -> bool {
+  if (GetSize() >= GetMaxSize()) {
+    return false;
+  }
+
+  std::copy_backward(array_, array_ + GetSize(), array_ + GetSize() + 1);
+  SetKeyValueAt(0, key, value);
+  IncreaseSize(1);
+  return true;
+}
+
 // valuetype for internalNode should be page id_t
 template class BPlusTreeInternalPage<GenericKey<4>, page_id_t, GenericComparator<4>>;
 template class BPlusTreeInternalPage<GenericKey<8>, page_id_t, GenericComparator<8>>;

@@ -174,6 +174,32 @@ class BPlusTree {
    */
   void InsertIntoInternalPage(page_id_t internal_page_id, page_id_t left_page_id, KeyType right_page_key, page_id_t right_page_id);
 
+  /**
+   * @brief Remove a kv pair from an internal page.
+   * Case 1: size >= min_size after removal
+   * - Unpin page and return
+   * 
+   * Case 2: size < min_size after removal, page is root page
+   * - size > 1: unpin page and return
+   * - size == 1: set its child as new root, delete page, unpin and return
+   * Case 3: size < min_size after removal, page is not root page
+   * - Try steal:
+   *   - Steal from its left/right sibling
+   *   - Update parent_page_id of children stolen
+   *   - Update key in its parent page
+   *   - Unpin and return
+   * 
+   * - Try merge:
+   *   - Merge with its left/right sibling
+   *   - Update parent_page_id of children merged
+   *   - Call RemoveFromInternalPage recursively to remove the kv pair of the page merged from its parent
+   *   - Unpin and return
+   * 
+   * @param internal_page_id the target internal page
+   * @param page_id_to_remove the value of the kv pair to be removed
+   */
+  void RemoveFromInternalPage(page_id_t internal_page_id, page_id_t page_id_to_remove);
+
   // member variable
   std::string index_name_;
   page_id_t root_page_id_;
