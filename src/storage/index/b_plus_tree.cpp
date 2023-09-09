@@ -129,7 +129,20 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
     return;
   }
 
-  if (leaf_page->GetSize() >= leaf_page->GetMinSize() || leaf_page->GetParentPageId() == INVALID_PAGE_ID) {
+  if (leaf_page->GetSize() >= leaf_page->GetMinSize()) {
+    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+    return;
+  }
+
+  if (leaf_page->GetPageId() == root_page_id_) {
+    // Set tree empty
+    if (leaf_page->GetSize() == 0) {
+      root_page_id_ = INVALID_PAGE_ID;
+      UpdateRootPageId();
+      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      buffer_pool_manager_->DeletePage(leaf_page->GetPageId());
+      return;
+    }
     buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
     return;
   }
