@@ -44,6 +44,8 @@ auto BufferPoolManagerInstance::FindFreeFrame(frame_id_t &frame_id) -> bool {
     free_list_.pop_back();
   } else {  // Try evict a frame if no free frame
     if (!replacer_->Evict(&frame_id)) {
+      // For debugging
+      throw Exception(ExceptionType::OUT_OF_MEMORY, "No free frame and no evictable frame");
       return false;
     }
     // Write the replacement page back to the disk if it's dirty

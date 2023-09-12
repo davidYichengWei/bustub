@@ -24,6 +24,12 @@ namespace bustub {
 #define BPLUSTREE_TYPE BPlusTree<KeyType, ValueType, KeyComparator>
 
 /**
+ * The type of operation performed on the B+ tree.
+ * Used to help determine concurrency control strategy.
+ */
+enum class Operation { READ, INSERT, DELETE };
+
+/**
  * Main class providing the API for the Interactive B+ Tree.
  *
  * Implementation of simple b+ tree data structure where internal pages direct
@@ -63,7 +69,7 @@ class BPlusTree {
    * 
    * @param key the key to insert
    * @param value the value to insert
-   * @param transaction ignore for project 2
+   * @param transaction for concurrency control
    * @return true if insert successfully
    * @return false if the key already exists
    */
@@ -76,8 +82,8 @@ class BPlusTree {
    * its min_size, need to perform redistribute or merge.
    * 
    * 
-   * @param key 
-   * @param transaction 
+   * @param key the key to remove
+   * @param transaction for concurrency control
    */
   void Remove(const KeyType &key, Transaction *transaction = nullptr);
 
@@ -86,7 +92,7 @@ class BPlusTree {
    * 
    * @param key the key to search for
    * @param[out] result a vector container to store the record id
-   * @param transaction ignore for project 2
+   * @param transaction for concurrency control
    * @return true key is found
    * @return false key not found
    */
@@ -124,9 +130,11 @@ class BPlusTree {
    * @brief Find the leaf page that might contain the key
    * 
    * @param key the key to search for
-   * @return LeafPage* a pointer to the leaf page
+   * @param operation the type of operation
+   * @param transaction for concurrency control
+   * @return Page * a pointer to the leaf page for UnLatch operation. Need to cast it to LeafPage *
    */
-  auto FindLeafPage(const KeyType &key) const -> LeafPage *;
+  auto FindLeafPage(const KeyType &key, Operation operation, Transaction *transaction) -> Page *;
 
   /**
    * @brief Split the leaf page by creating a new leaf page and moving the second half of the key-value pairs to the new page.
@@ -197,8 +205,29 @@ class BPlusTree {
    * 
    * @param internal_page_id the target internal page
    * @param page_id_to_remove the value of the kv pair to be removed
+   * @param transaction for concurrency control
    */
-  void RemoveFromInternalPage(page_id_t internal_page_id, page_id_t page_id_to_remove);
+  void RemoveFromInternalPage(page_id_t internal_page_id, page_id_t page_id_to_remove, Transaction *transaction);
+
+  /**
+   * @brief Release all write latches on pages in a transaction and unpin those pages.
+   * Use nullptr to indicate root_latch_ acquired.
+   * 
+   * If the page's id is in deleted_page_set_, need to delete the page.
+   * 
+   * @param transaction the transaction recording pages latched
+   */
+  void ReleaseAllWLatch(Transaction *transaction);
+
+  /**
+   * @brief Check if the current page is considered safe based on the operation.
+   * 
+   * @param page the target page
+   * @param operation the type of operation
+   * @return true the operation is safe
+   * @return false the operation is unsafe
+   */
+  auto IsSafe(BPlusTreePage *page, Operation operation) -> bool;
 
   // member variable
   std::string index_name_;
@@ -207,6 +236,7 @@ class BPlusTree {
   KeyComparator comparator_;
   int leaf_max_size_;
   int internal_max_size_;
+  std::shared_mutex root_latch_;
 };
 
 }  // namespace bustub

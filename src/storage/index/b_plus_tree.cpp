@@ -32,7 +32,8 @@ auto BPLUSTREE_TYPE::IsEmpty() const -> bool { return root_page_id_ == INVALID_P
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result, Transaction *transaction) -> bool {
-  LeafPage *leaf_page = FindLeafPage(key);
+  Page *page = FindLeafPage(key, Operation::READ, transaction);
+  LeafPage *leaf_page = reinterpret_cast<LeafPage *>(page->GetData());
   bool found = false;
 
   int left = 0, right = leaf_page->GetSize() - 1;
@@ -49,6 +50,7 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
     }
   }
 
+  page->RUnlatch();
   buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), false);
   return found;
 }
@@ -66,11 +68,13 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transaction *transaction) -> bool {
   // Create or find the leaf page to insert
+  Page *page;
   LeafPage *leaf_page;
+  root_latch_.lock(); // Might update root_page_id_, need to lock
   if (IsEmpty()) {
     // Allocate and initialize a new leaf page
     page_id_t root_page_id;
-    auto *page = buffer_pool_manager_->NewPage(&root_page_id);
+    page = buffer_pool_manager_->NewPage(&root_page_id);
     if (page == nullptr) {
       throw Exception(ExceptionType::OUT_OF_MEMORY, "Failed to allocate new page");
     }
@@ -80,20 +84,27 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
     // Update root_page_id_
     root_page_id_ = root_page_id;
     UpdateRootPageId(1);
+
+    // Latch crabbing, lock the leaf page before unlocking root_latch_
+    page->WLatch();
+    transaction->AddIntoPageSet(page); // Use ReleaseAllWLatch to unlock later
+    root_latch_.unlock();
   }
   else {
-    leaf_page = FindLeafPage(key);
+    root_latch_.unlock(); // Need to unlock before calling FindLeafPage to avoid deadlock
+    page = FindLeafPage(key, Operation::INSERT, transaction);
+    leaf_page = reinterpret_cast<LeafPage *>(page->GetData());
   }
 
   // If insertion failed, it's a duplicate
   if (!leaf_page->InsertKeyValuePair(key, value, comparator_)) {
-    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), false);
+    ReleaseAllWLatch(transaction);
     return false;
   }
 
   // If leaf node doesn't reach max_size after insert, just return
   if (leaf_page->GetSize() < leaf_page->GetMaxSize()) {
-    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+    ReleaseAllWLatch(transaction);
     return true;
   }
 
@@ -103,7 +114,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
   // Insert the first key of the new page to its parent page
   InsertIntoInternalPage(leaf_page->GetParentPageId(), leaf_page->GetPageId(), new_leaf_page->KeyAt(0), new_leaf_page->GetPageId());
 
-  buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+  ReleaseAllWLatch(transaction);
   buffer_pool_manager_->UnpinPage(new_leaf_page->GetPageId(), true);
 
   return true;
@@ -119,18 +130,25 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
  * delete entry from leaf page. Remember to deal with redistribute or merge if
  * necessary.
  */
+// TODO: fix insert_30 delete 1
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
-  if (IsEmpty()) return;
+  root_latch_.lock_shared();
+  if (IsEmpty()) {
+    root_latch_.unlock_shared();
+    return;
+  }
+  root_latch_.unlock_shared();
 
-  LeafPage *leaf_page = FindLeafPage(key);
+  LeafPage *leaf_page = reinterpret_cast<LeafPage *>(FindLeafPage(key, Operation::DELETE, transaction)->GetData());
   if (!leaf_page->RemoveKeyValuePair(key, comparator_)) {
-    LOG_INFO("Remove: key not found");
+    // LOG_INFO("Remove: key not found");
+    ReleaseAllWLatch(transaction);
     return;
   }
 
   if (leaf_page->GetSize() >= leaf_page->GetMinSize()) {
-    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+    ReleaseAllWLatch(transaction);
     return;
   }
 
@@ -139,15 +157,18 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
     if (leaf_page->GetSize() == 0) {
       root_page_id_ = INVALID_PAGE_ID;
       UpdateRootPageId();
-      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
-      buffer_pool_manager_->DeletePage(leaf_page->GetPageId());
+
+      // Add page to deleted_page_set to delete using ReleaseAllWLatch
+      transaction->AddIntoDeletedPageSet(leaf_page->GetPageId());
+      ReleaseAllWLatch(transaction);
       return;
     }
-    buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+    ReleaseAllWLatch(transaction);
     return;
   }
 
   // Find the index of the leaf page in its parent page
+  // This parent_page is already latched by FindLeafPage, need to Unpin manually
   InternalPage *parent_page = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(leaf_page->GetParentPageId())->GetData());
   int index = -1;
   for (int i = 0; i < parent_page->GetSize(); i++) {
@@ -158,64 +179,92 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
   }
   assert(index != -1);
 
-  // First try steal from its left sibling
+  // First try steal from its left sibling, need to latch
   if (index != 0) {
-    LeafPage *left_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    Page *left_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1));
+    left_sibling_page->WLatch();
+
+    LeafPage *left_sibling = reinterpret_cast<LeafPage *>(left_sibling_page->GetData());
     if (leaf_page->StealFromLeftSibling(left_sibling, comparator_)) {
       // Update key index in the parent page
       KeyType new_key = leaf_page->KeyAt(0);
       parent_page->SetKeyAt(index, new_key);
 
-      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      ReleaseAllWLatch(transaction);
+      left_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
       buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    left_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), false);
   }
 
-  // Steal from left sibling didn't work, try steal from its right sibling
+  // Steal from left sibling didn't work, try steal from its right sibling, need to latch
   if (index < parent_page->GetSize() - 1) {
-    LeafPage *right_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    Page *right_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1));
+    right_sibling_page->WLatch();
+
+    LeafPage *right_sibling = reinterpret_cast<LeafPage *>(right_sibling_page->GetData());
     if (leaf_page->StealFromRightSibling(right_sibling, comparator_)) {
       // Update the key index of its right sibling in the parent page
       KeyType new_key = right_sibling->KeyAt(0);
       parent_page->SetKeyAt(index + 1, new_key);
 
-      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      ReleaseAllWLatch(transaction);
+      right_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(right_sibling->GetPageId(), true);
       buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    right_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(right_sibling->GetPageId(), false);
   }
 
   // Try merge with its left sibling, call resursive helper function
   if (index != 0) {
-    LeafPage *left_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    Page *left_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1));
+    left_sibling_page->WLatch();
+
+    LeafPage *left_sibling = reinterpret_cast<LeafPage *>(left_sibling_page->GetData());
     if (left_sibling->Merge(leaf_page)) {
+      // Remove leaf page, use ReleaseAllWLatch
       page_id_t page_id_to_remove = leaf_page->GetPageId();
-      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
-      buffer_pool_manager_->DeletePage(leaf_page->GetPageId());
+      transaction->AddIntoDeletedPageSet(page_id_to_remove);
 
-      RemoveFromInternalPage(left_sibling->GetParentPageId(), page_id_to_remove);
+      RemoveFromInternalPage(left_sibling->GetParentPageId(), page_id_to_remove, transaction);
 
+      ReleaseAllWLatch(transaction);
+      left_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    left_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), false);
   }
 
   // Try merge with its right sibling, call resursive helper function
   if (index < parent_page->GetSize() - 1) {
-    LeafPage *right_sibling = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    Page *right_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1));
+    right_sibling_page->WLatch();
+
+    LeafPage *right_sibling = reinterpret_cast<LeafPage *>(right_sibling_page->GetData());
     if (leaf_page->Merge(right_sibling)) {
+      // Remove right_sibling leaf page, since it's not in transaction page set, delete it right here
       page_id_t page_id_to_remove = right_sibling->GetPageId();
+      right_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(page_id_to_remove, true);
       buffer_pool_manager_->DeletePage(page_id_to_remove);
 
-      RemoveFromInternalPage(leaf_page->GetParentPageId(), page_id_to_remove);
+      RemoveFromInternalPage(leaf_page->GetParentPageId(), page_id_to_remove, transaction);
 
-      buffer_pool_manager_->UnpinPage(leaf_page->GetPageId(), true);
+      ReleaseAllWLatch(transaction);
+      buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    right_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(right_sibling->GetPageId(), false);
   }
 
   throw std::runtime_error("Remove failed");
@@ -255,7 +304,7 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
-  LeafPage *leaf_page = FindLeafPage(key);
+  LeafPage *leaf_page = reinterpret_cast<LeafPage *>(FindLeafPage(key, Operation::READ, nullptr)->GetData());
   if (leaf_page == nullptr) {
     return INDEXITERATOR_TYPE();
   }
@@ -503,12 +552,39 @@ void BPLUSTREE_TYPE::ToString(BPlusTreePage *page, BufferPoolManager *bpm) const
 }
 
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key) const -> LeafPage * {
-  if (root_page_id_ == INVALID_PAGE_ID) return nullptr;
+auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key, Operation operation, Transaction *transaction) -> Page * {
+  if (operation == Operation::READ) {
+    root_latch_.lock_shared();
+  }
+  else {
+    root_latch_.lock();
+    transaction->AddIntoPageSet(nullptr); // Add nullptr to indicate that root_latch_ is acquired
+  }
 
-  auto *page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(root_page_id_)->GetData());
-  while (!page->IsLeafPage()) {
-    auto *internal_page = reinterpret_cast<InternalPage *>(page);
+  if (root_page_id_ == INVALID_PAGE_ID) {
+    if (operation == Operation::READ) {
+      root_latch_.unlock_shared();
+    }
+    else {
+      root_latch_.unlock();
+    }
+    return nullptr;
+  }
+
+  Page *prev_page = nullptr;
+  Page *page = buffer_pool_manager_->FetchPage(root_page_id_);
+  if (operation == Operation::READ) {
+    page->RLatch();
+    root_latch_.unlock_shared();
+  }
+  else {
+    page->WLatch();
+    transaction->AddIntoPageSet(page);
+  }
+
+  auto *tree_page = reinterpret_cast<BPlusTreePage *>(page->GetData());
+  while (!tree_page->IsLeafPage()) {
+    auto *internal_page = reinterpret_cast<InternalPage *>(tree_page);
 
     // Find the index of the first key that is greater than the given key
     int index = internal_page->GetSize();
@@ -523,10 +599,32 @@ auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key) const -> LeafPage * {
       }
     }
 
-    page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(internal_page->ValueAt(index - 1))->GetData());
-    buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), false);
+    prev_page = page;
+    page = buffer_pool_manager_->FetchPage(internal_page->ValueAt(index - 1));
+    tree_page = reinterpret_cast<BPlusTreePage *>(page->GetData());
+
+    // Latch crabbing
+    if (operation == Operation::READ) {
+      page->RLatch();
+      prev_page->RUnlatch();
+      buffer_pool_manager_->UnpinPage(prev_page->GetPageId(), false);
+    }
+    else if (operation == Operation::INSERT) {
+      page->WLatch();
+      if (IsSafe(tree_page, Operation::INSERT)) {
+        ReleaseAllWLatch(transaction);
+      }
+      transaction->AddIntoPageSet(page);
+    }
+    else if (operation == Operation::DELETE) {
+      page->WLatch();
+      if (IsSafe(tree_page, Operation::DELETE)) {
+        ReleaseAllWLatch(transaction);
+      }
+      transaction->AddIntoPageSet(page);
+    }
   }
-  return reinterpret_cast<LeafPage *>(page);
+  return page;
 }
 
 INDEX_TEMPLATE_ARGUMENTS
@@ -584,6 +682,7 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(page_id_t internal_page_id, page_id_
   // Case 1: internal_page_id is INVALID_PAGE_ID
   if (internal_page_id == INVALID_PAGE_ID) {
     // Create a new internal page, set it as the new root
+    // Note: No need to acquire root_latch_ here, since we would have already acquired it
     auto *page = buffer_pool_manager_->NewPage(&internal_page_id);
     if (page == nullptr) {
       throw Exception(ExceptionType::OUT_OF_MEMORY, "Failed to allocate new page");
@@ -633,9 +732,11 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(page_id_t internal_page_id, page_id_
   buffer_pool_manager_->UnpinPage(new_internal_page->GetPageId(), true);
 }
 
+// Don't use ReleaseAllWLatch in this function, only add page to delete to transaction
 INDEX_TEMPLATE_ARGUMENTS
-void BPLUSTREE_TYPE::RemoveFromInternalPage(page_id_t internal_page_id, page_id_t page_id_to_remove) {
+void BPLUSTREE_TYPE::RemoveFromInternalPage(page_id_t internal_page_id, page_id_t page_id_to_remove, Transaction *transaction) {
   if (internal_page_id == INVALID_PAGE_ID) throw std::runtime_error("Remove from invalid internal page");
+  // This internal_page is already latched by FindLeafPage, need to manually Unpin in this function
   InternalPage *internal_page = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(internal_page_id)->GetData());
 
   if (!internal_page->RemoveKeyValuePair(page_id_to_remove)) {
@@ -649,6 +750,7 @@ void BPLUSTREE_TYPE::RemoveFromInternalPage(page_id_t internal_page_id, page_id_
   }
 
   // Case 2: size < min_size after removal, page is root page
+  // root_latch_ already acquired
   if (internal_page_id == root_page_id_) {
     // size > 1: unpin page and return
     if (internal_page->GetSize() > 1) {
@@ -664,12 +766,13 @@ void BPLUSTREE_TYPE::RemoveFromInternalPage(page_id_t internal_page_id, page_id_
     buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
 
     buffer_pool_manager_->UnpinPage(internal_page_id, true);
-    buffer_pool_manager_->DeletePage(internal_page_id);
+    transaction->AddIntoDeletedPageSet(internal_page_id); // Use ReleaseAllWLatch to delete page
     return;
   }
 
   // Case 3: size < min_size after removal, page is not root page
   // Find the index of the internal page in its parent page
+  // parent_page already latched, but need to Unpin it in this function
   InternalPage *parent_page = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(internal_page->GetParentPageId())->GetData());
   int index = -1;
   for (int i = 0; i < parent_page->GetSize(); i++) {
@@ -680,81 +783,106 @@ void BPLUSTREE_TYPE::RemoveFromInternalPage(page_id_t internal_page_id, page_id_
   }
   assert(index != -1);
 
-  // First try steal from its left sibling
+  // First try steal from its left sibling, need to latch
   if (index != 0) {
-    InternalPage *left_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    Page *left_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1));
+    left_sibling_page->WLatch();
+
+    InternalPage *left_sibling = reinterpret_cast<InternalPage *>(left_sibling_page->GetData());
     if (internal_page->StealFromLeftSibling(left_sibling, comparator_)) {
       // Update key index in the parent page
       KeyType new_key = internal_page->KeyAt(0);
       parent_page->SetKeyAt(index, new_key);
 
-      // Update parent_page_id of the child page stolen
+      // Update parent_page_id of the child page stolen,
+      // no latch needed since its parent is latched
       BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(internal_page->ValueAt(0))->GetData());
       child_page->SetParentPageId(internal_page->GetPageId());
 
       buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
       buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), true);
+      left_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
       buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    left_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(left_sibling_page->GetPageId(), false);
   }
 
   // Steal from left sibling didn't work, try steal from its right sibling
   if (index < parent_page->GetSize() - 1) {
-    InternalPage *right_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    Page *right_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1));
+    right_sibling_page->WLatch();
+
+    InternalPage *right_sibling = reinterpret_cast<InternalPage *>(right_sibling_page->GetData());
     if (internal_page->StealFromRightSibling(right_sibling, comparator_)) {
       // Update the key index of its right sibling in the parent page
       KeyType new_key = right_sibling->KeyAt(0);
       parent_page->SetKeyAt(index + 1, new_key);
 
-      // Update parent_page_id of the child page stolen
-      BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(
-        internal_page->ValueAt(internal_page->GetSize() - 1))->GetData());
+      // Update parent_page_id of the child page stolen, no latch needed
+      BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->
+        FetchPage(internal_page->ValueAt(internal_page->GetSize() - 1))->GetData());
       child_page->SetParentPageId(internal_page->GetPageId());
 
       buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
       buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), true);
+      right_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(right_sibling->GetPageId(), true);
       buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    right_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(right_sibling_page->GetPageId(), false);
   }
 
   // Try merge with its left sibling, call resursive helper function
   if (index != 0) {
-    InternalPage *left_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1))->GetData());
+    Page *left_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index - 1));
+    left_sibling_page->WLatch();
+
+    InternalPage *left_sibling = reinterpret_cast<InternalPage *>(left_sibling_page->GetData());
     int old_size = left_sibling->GetSize();
     if (left_sibling->Merge(internal_page)) { // Merge internal_page into left_sibling
       page_id_t page_id_to_remove = internal_page->GetPageId();
-      buffer_pool_manager_->UnpinPage(internal_page->GetPageId(), true);
-      buffer_pool_manager_->DeletePage(internal_page->GetPageId());
+      buffer_pool_manager_->UnpinPage(page_id_to_remove, true);
+      transaction->AddIntoDeletedPageSet(page_id_to_remove); // Use ReleaseAllWLatch to delete page
 
-      RemoveFromInternalPage(left_sibling->GetParentPageId(), page_id_to_remove);
+      RemoveFromInternalPage(left_sibling->GetParentPageId(), page_id_to_remove, transaction);
 
-      // Update parent_page_id of the child pages merged
+      // Update parent_page_id of the child pages merged,
+      // no need to latch since its parent is latched
       for (int i = old_size; i < left_sibling->GetSize(); i++) {
         BPlusTreePage *child_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(left_sibling->ValueAt(i))->GetData());
         child_page->SetParentPageId(left_sibling->GetPageId());
         buffer_pool_manager_->UnpinPage(child_page->GetPageId(), true);
       }
 
+      left_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(left_sibling->GetPageId(), true);
       buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    left_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(left_sibling_page->GetPageId(), false);
   }
 
   // Try merge with its right sibling, call resursive helper function
   if (index < parent_page->GetSize() - 1) {
-    InternalPage *right_sibling = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1))->GetData());
+    Page *right_sibling_page = buffer_pool_manager_->FetchPage(parent_page->ValueAt(index + 1));
+    right_sibling_page->WLatch();
+
+    InternalPage *right_sibling = reinterpret_cast<InternalPage *>(right_sibling_page->GetData());
     int old_size = internal_page->GetSize();
     if (internal_page->Merge(right_sibling)) { // Merge right_sibling into internal_page
+      // Here we are deleting right_sibling, which is not in the transaction's page set, so delete it right here
       page_id_t page_id_to_remove = right_sibling->GetPageId();
+      right_sibling_page->WUnlatch();
       buffer_pool_manager_->UnpinPage(page_id_to_remove, true);
       buffer_pool_manager_->DeletePage(page_id_to_remove);
 
-      RemoveFromInternalPage(internal_page->GetParentPageId(), page_id_to_remove);
+      RemoveFromInternalPage(internal_page->GetParentPageId(), page_id_to_remove, transaction);
 
       // Update parent_page_id of the child pages merged
       for (int i = old_size; i < internal_page->GetSize(); i++) {
@@ -767,9 +895,64 @@ void BPLUSTREE_TYPE::RemoveFromInternalPage(page_id_t internal_page_id, page_id_
       buffer_pool_manager_->UnpinPage(parent_page->GetPageId(), true);
       return;
     }
+    right_sibling_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(right_sibling_page->GetPageId(), false);
   }
 
   throw std::runtime_error("Remove from internal page failed");
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::ReleaseAllWLatch(Transaction *transaction) {
+  if (transaction == nullptr) return;
+
+  auto page_set = transaction->GetPageSet();
+  while (!page_set->empty()) {
+    Page *page = page_set->front();
+    page_set->pop_front();
+    if (page == nullptr) {
+      root_latch_.unlock();
+    }
+    else {
+      page->WUnlatch();
+      page_id_t page_id = page->GetPageId();
+      buffer_pool_manager_->UnpinPage(page_id, true);
+
+      // Delete the page if needed
+      auto deleted_page_set = *(transaction->GetDeletedPageSet());
+      if (deleted_page_set.find(page_id) != deleted_page_set.end()) {
+        buffer_pool_manager_->DeletePage(page_id);
+        deleted_page_set.erase(page_id);
+      }
+    }
+  }
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto BPLUSTREE_TYPE::IsSafe(BPlusTreePage *page, Operation operation) -> bool {
+  if (operation == Operation::READ) {
+    return true;
+  }
+  if (operation == Operation::INSERT) {
+    if (page->IsLeafPage()) {
+      return page->GetSize() < page->GetMaxSize() - 1;
+    }
+    else {
+      return page->GetSize() < page->GetMaxSize();
+    }
+  }
+  if (operation == Operation::DELETE) {
+    if (page->IsRootPage()) {
+      if (page->IsLeafPage()) {
+        return page->GetSize() > 0;
+      }
+      return page->GetSize() > 1;
+    }
+    else {
+      return page->GetSize() > page->GetMinSize();
+    }
+  }
+  return false;
 }
 
 template class BPlusTree<GenericKey<4>, RID, GenericComparator<4>>;

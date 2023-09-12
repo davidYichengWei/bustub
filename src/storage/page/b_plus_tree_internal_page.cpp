@@ -203,7 +203,7 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::StealFromRightSibling(B_PLUS_TREE_INTERNAL_
 INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Merge(B_PLUS_TREE_INTERNAL_PAGE_TYPE *right_sibling) -> bool {
   // If merge is required, shouldn't need to split after merge
-  if (GetSize() + right_sibling->GetSize() >= GetMaxSize()) {
+  if (GetSize() + right_sibling->GetSize() > GetMaxSize()) {
     return false;
   }
 
