@@ -28,7 +28,15 @@ class IndexIterator {
   IndexIterator() : leaf_page_(nullptr), array_index_(0), buffer_pool_manager_(nullptr) {}
   IndexIterator(LeafPage *leaf_page, int array_index, BufferPoolManager *buffer_pool_manager)
     : leaf_page_(leaf_page), array_index_(array_index), buffer_pool_manager_(buffer_pool_manager) {}
-  ~IndexIterator() { if (leaf_page_) buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false); }
+  ~IndexIterator() {
+    if (leaf_page_) {
+      // Unlatch
+      Page *page = buffer_pool_manager_->FetchPage(leaf_page_->GetPageId());
+      page->RUnlatch();
+      buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false); // decrement pin count twice
+      buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false);
+    }
+  }
 
   auto IsEnd() -> bool;
 

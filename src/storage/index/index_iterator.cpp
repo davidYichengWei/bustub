@@ -32,15 +32,28 @@ auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
   }
 
   if (leaf_page_->GetNextPageId() == INVALID_PAGE_ID) {
+    // Unlatch
+    Page *page = buffer_pool_manager_->FetchPage(leaf_page_->GetPageId());
+    page->RUnlatch();
+    buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false);
     buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false);
     leaf_page_ = nullptr;
     array_index_ = 0;
     return *this;
   }
 
-  LeafPage *next_page = reinterpret_cast<LeafPage *>(buffer_pool_manager_->FetchPage(leaf_page_->GetNextPageId()));
+  Page *next_page = buffer_pool_manager_->FetchPage(leaf_page_->GetNextPageId());
+  if (!next_page->TryRLatch()) {
+    throw std::runtime_error("Index iterator failed to acquire latch");
+  }
+
+  LeafPage *next_leaf_page = reinterpret_cast<LeafPage *>(next_page->GetData());
+  // Unlatch
+  Page *page = buffer_pool_manager_->FetchPage(leaf_page_->GetPageId());
+  page->RUnlatch();
   buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false);
-  leaf_page_ = next_page;
+  buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false);
+  leaf_page_ = next_leaf_page;
   array_index_ = 0;
   return *this;
 }

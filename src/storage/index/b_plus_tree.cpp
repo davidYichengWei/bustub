@@ -280,20 +280,28 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *transaction) {
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
+  root_latch_.lock_shared();
   if (root_page_id_ == INVALID_PAGE_ID) {
+    root_latch_.unlock_shared();
     return INDEXITERATOR_TYPE();
   }
 
-  page_id_t current_page_id = root_page_id_;
+  Page *prev_page = nullptr;
+  Page *page = buffer_pool_manager_->FetchPage(root_page_id_);
+  page->RLatch();
+  root_latch_.unlock_shared();
   while (true) {
-    BPlusTreePage *current_page = reinterpret_cast<BPlusTreePage *>(buffer_pool_manager_->FetchPage(current_page_id)->GetData());
+    BPlusTreePage *current_page = reinterpret_cast<BPlusTreePage *>(page->GetData());
     if (current_page->IsLeafPage()) {
       return INDEXITERATOR_TYPE(reinterpret_cast<LeafPage *>(current_page), 0, buffer_pool_manager_);
     }
 
     InternalPage *current_internal_page = reinterpret_cast<InternalPage *>(current_page);
-    current_page_id = current_internal_page->ValueAt(0);
-    buffer_pool_manager_->UnpinPage(current_internal_page->GetPageId(), false);
+    prev_page = page;
+    page = buffer_pool_manager_->FetchPage(current_internal_page->ValueAt(0));
+    page->RLatch();
+    prev_page->RUnlatch();
+    buffer_pool_manager_->UnpinPage(prev_page->GetPageId(), false);
   }
 }
 

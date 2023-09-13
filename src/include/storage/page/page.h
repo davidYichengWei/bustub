@@ -54,11 +54,17 @@ class Page {
   /** Release the page write latch. */
   inline void WUnlatch() { rwlatch_.WUnlock(); }
 
+  /** Try acquire the page write latch. */
+  inline auto TryWLatch() -> bool { return rwlatch_.TryWLock(); }
+
   /** Acquire the page read latch. */
   inline void RLatch() { rwlatch_.RLock(); }
 
   /** Release the page read latch. */
   inline void RUnlatch() { rwlatch_.RUnlock(); }
+
+  /** Try acquire the page read latch. */
+  inline auto TryRLatch() -> bool { return rwlatch_.TryRLock(); }
 
   /** @return the page LSN. */
   inline auto GetLSN() -> lsn_t { return *reinterpret_cast<lsn_t *>(GetData() + OFFSET_LSN); }

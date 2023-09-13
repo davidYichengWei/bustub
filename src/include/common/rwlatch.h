@@ -35,6 +35,11 @@ class ReaderWriterLatch {
   void WUnlock() { mutex_.unlock(); }
 
   /**
+   * Try acquire a write latch.
+   */
+  auto TryWLock() -> bool { return mutex_.try_lock(); }
+
+  /**
    * Acquire a read latch.
    */
   void RLock() { mutex_.lock_shared(); }
@@ -43,6 +48,11 @@ class ReaderWriterLatch {
    * Release a read latch.
    */
   void RUnlock() { mutex_.unlock_shared(); }
+
+  /**
+   * Try acquire a read latch.
+   */
+  auto TryRLock() -> bool { return mutex_.try_lock_shared(); }
 
  private:
   std::shared_mutex mutex_;
