@@ -183,6 +183,12 @@ auto GetShuffled(const MockScanPlanNode *plan) -> bool {
   return false;
 }
 
+/**
+ * @brief Return a function that generates a tuple based on the cursor.
+ * 
+ * @param plan the plan node for the mock scan, containing the table name.
+ * @return std::function<Tuple(size_t)> a function that generates a tuple based on the cursor.
+ */
 auto GetFunctionOf(const MockScanPlanNode *plan) -> std::function<Tuple(size_t)> {
   const auto &table = plan->GetTable();
 

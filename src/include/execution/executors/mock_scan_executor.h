@@ -72,7 +72,7 @@ class MockScanExecutor : public AbstractExecutor {
   std::size_t cursor_{0};
 
   /** The table function */
-  std::function<Tuple(std::size_t)> func_;
+  std::function<Tuple(std::size_t)> func_; // Returning Tuple based on RID?
 
   /** The size of the mock table */
   std::size_t size_;

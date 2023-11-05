@@ -29,6 +29,13 @@ class TableIterator {
   friend class Cursor;
 
  public:
+  /**
+   * @brief Create a dummy iterator that is not associated with any table heap.
+   * Need to initialize tuple_ to allow using the copy constructor.
+   * 
+   */
+  TableIterator() : tuple_(new Tuple()) {}
+
   TableIterator(TableHeap *table_heap, RID rid, Transaction *txn);
 
   TableIterator(const TableIterator &other)

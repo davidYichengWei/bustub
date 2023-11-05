@@ -28,12 +28,17 @@ class SeqScanExecutor : public AbstractExecutor {
  public:
   /**
    * Construct a new SeqScanExecutor instance.
-   * @param exec_ctx The executor context
+   * @param exec_ctx The executor context.
    * @param plan The sequential scan plan to be executed
    */
   SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNode *plan);
 
-  /** Initialize the sequential scan */
+
+  /**
+   * @brief Initialize the sequential scan.
+   * Set table_iterator_ to the beginning of the table.
+   * 
+   */
   void Init() override;
 
   /**
@@ -50,5 +55,8 @@ class SeqScanExecutor : public AbstractExecutor {
  private:
   /** The sequential scan plan node to be executed */
   const SeqScanPlanNode *plan_;
+
+  TableHeap *table_heap_;
+  TableIterator table_iterator_;
 };
 }  // namespace bustub
