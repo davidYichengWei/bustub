@@ -43,8 +43,12 @@ class InsertExecutor : public AbstractExecutor {
   /**
    * Yield the number of rows inserted into the table.
    * @param[out] tuple The integer tuple indicating the number of rows inserted into the table
+   * Use this Tuple constructor Tuple(std::vector<Value> values, const Schema *schema);
+   * Need to create a Schema with one INTEGER type column.
    * @param[out] rid The next tuple RID produced by the insert (ignore, not used)
    * @return `true` if a tuple was produced, `false` if there are no more tuples
+   * 
+   * Remember to update all indexes on each inserted tuple.
    *
    * NOTE: InsertExecutor::Next() does not use the `rid` out-parameter.
    * NOTE: InsertExecutor::Next() returns true with number of inserted rows produced only once.
@@ -55,8 +59,19 @@ class InsertExecutor : public AbstractExecutor {
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); };
 
  private:
+  /** The execution context*/
+  ExecutorContext *exec_ctx_;
   /** The insert plan node to be executed*/
   const InsertPlanNode *plan_;
+
+  TableInfo *table_info_;
+  std::vector<IndexInfo *> index_info_list_;
+
+  // For pulling tuples to insert
+  std::unique_ptr<AbstractExecutor> child_executor_;
+
+  int insert_count = 0;
+  bool executed_ = false; // Next return true only once
 };
 
 }  // namespace bustub
