@@ -56,9 +56,18 @@ class DeleteExecutor : public AbstractExecutor {
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); };
 
  private:
+  /** The execution context*/
+  ExecutorContext *exec_ctx_;
   /** The delete plan node to be executed */
   const DeletePlanNode *plan_;
+  
+  TableInfo *table_info_;
+  std::vector<IndexInfo *> index_info_list_;
+
   /** The child executor from which RIDs for deleted tuples are pulled */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  int delete_count_ = 0;
+  bool executed_ = false;
 };
 }  // namespace bustub
