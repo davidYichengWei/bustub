@@ -42,7 +42,12 @@ class IndexScanExecutor : public AbstractExecutor {
   auto Next(Tuple *tuple, RID *rid) -> bool override;
 
  private:
+  ExecutorContext *exec_ctx_;
   /** The index scan plan node to be executed. */
   const IndexScanPlanNode *plan_;
+
+  TableInfo *table_info_;
+  BPlusTreeIndexForOneIntegerColumn *index_;
+  BPlusTreeIndexIteratorForOneIntegerColumn index_iterator_;
 };
 }  // namespace bustub

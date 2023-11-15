@@ -32,11 +32,6 @@ auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
   }
 
   if (leaf_page_->GetNextPageId() == INVALID_PAGE_ID) {
-    // Unlatch
-    Page *page = buffer_pool_manager_->FetchPage(leaf_page_->GetPageId());
-    page->RUnlatch();
-    buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false);
-    buffer_pool_manager_->UnpinPage(leaf_page_->GetPageId(), false);
     leaf_page_ = nullptr;
     array_index_ = 0;
     return *this;
