@@ -67,17 +67,61 @@ class SimpleAggregationHashTable {
    * TODO(Student)
    *
    * Combines the input into the aggregation result.
-   * @param[out] result The output aggregate value
-   * @param input The input value
+   * The aggregate value would have been initialized.
+   * 
+   * @param[out] result The existing aggregate value.
+   * @param input The aggregate value for the current input.
    */
   void CombineAggregateValues(AggregateValue *result, const AggregateValue &input) {
     for (uint32_t i = 0; i < agg_exprs_.size(); i++) {
       switch (agg_types_[i]) {
         case AggregationType::CountStarAggregate:
+          // Increment count * regardless of input.
+          result->aggregates_[i] = result->aggregates_[i].Add(ValueFactory::GetIntegerValue(1));
+          break;
         case AggregationType::CountAggregate:
+          if (input.aggregates_[i].IsNull()) {
+            break;
+          }
+
+          if (result->aggregates_[i].IsNull()) {
+            result->aggregates_[i] = ValueFactory::GetIntegerValue(0);
+          }
+          result->aggregates_[i] = result->aggregates_[i].Add(ValueFactory::GetIntegerValue(1));
+          break;
         case AggregationType::SumAggregate:
+          if (input.aggregates_[i].IsNull()) {
+            break;
+          }
+
+          if (result->aggregates_[i].IsNull()) {
+            result->aggregates_[i] = ValueFactory::GetIntegerValue(0);
+          }
+          result->aggregates_[i] = result->aggregates_[i].Add(input.aggregates_[i]);
+          break;
         case AggregationType::MinAggregate:
+          if (input.aggregates_[i].IsNull()) {
+            break;
+          }
+
+          if (result->aggregates_[i].IsNull()) {
+            result->aggregates_[i] = input.aggregates_[i];
+          }
+          else {
+            result->aggregates_[i] = result->aggregates_[i].Min(input.aggregates_[i]);
+          }
+          break;
         case AggregationType::MaxAggregate:
+          if (input.aggregates_[i].IsNull()) {
+            break;
+          }
+
+          if (result->aggregates_[i].IsNull()) {
+            result->aggregates_[i] = input.aggregates_[i];
+          }
+          else {
+            result->aggregates_[i] = result->aggregates_[i].Max(input.aggregates_[i]);
+          }
           break;
       }
     }
@@ -85,6 +129,7 @@ class SimpleAggregationHashTable {
 
   /**
    * Inserts a value into the hash table and then combines it with the current aggregation.
+   * Insert one tuple at a time.
    * @param agg_key the key to be inserted
    * @param agg_val the value to be inserted
    */
@@ -93,6 +138,15 @@ class SimpleAggregationHashTable {
       ht_.insert({agg_key, GenerateInitialAggregateValue()});
     }
     CombineAggregateValues(&ht_[agg_key], agg_val);
+  }
+
+  /**
+   * @brief Insert a KV pair with initial values into the AHT to handle empty table corner case.
+   * 
+   */
+  void InsertInitialKVPair(AggregateKey &key) {
+    AggregateValue value = GenerateInitialAggregateValue();
+    ht_.insert({key, value});
   }
 
   /**
@@ -125,7 +179,16 @@ class SimpleAggregationHashTable {
     auto operator!=(const Iterator &other) -> bool { return this->iter_ != other.iter_; }
 
    private:
-    /** Aggregates map */
+    /** Aggregates map 
+     * @param AggregateKey std::vector<Value>, the values of the group by columns
+     * @param AggregateValue std::vector<Value>, the aggregate values of the group by columns.
+     * We gave ibe aggregate value for each aggregate type.
+     * 
+     * @example SELECT min(z), max(z), sum(z) FROM t GROUP BY x, y;
+     * AggregateKey: {x, y}
+     * AggregaetValue: {z, z, z}
+     * aggregate_types: {min, max, sum}
+    */
     std::unordered_map<AggregateKey, AggregateValue>::const_iterator iter_;
   };
 
@@ -159,11 +222,14 @@ class AggregationExecutor : public AbstractExecutor {
   AggregationExecutor(ExecutorContext *exec_ctx, const AggregationPlanNode *plan,
                       std::unique_ptr<AbstractExecutor> &&child);
 
-  /** Initialize the aggregation */
+  /** Initialize the aggregation 
+   *  Build SimpleAggregationHashTable by pulling tuples from the child executor.
+  */
   void Init() override;
 
   /**
    * Yield the next tuple from the insert.
+   * Iterate through the SimpleAggregationHashTable to produce the next tuple.
    * @param[out] tuple The next tuple produced by the aggregation
    * @param[out] rid The next tuple RID produced by the aggregation
    * @return `true` if a tuple was produced, `false` if there are no more tuples
@@ -186,6 +252,14 @@ class AggregationExecutor : public AbstractExecutor {
     return {keys};
   }
 
+  auto MakeEmptyAggregateKey() -> AggregateKey {
+    std::vector<Value> keys;
+    for (const auto &expr : plan_->GetGroupBys()) {
+      keys.emplace_back(ValueFactory::GetNullValueByType(expr.get()->GetReturnType()));
+    }
+    return {keys};
+  }
+
   /** @return The tuple as an AggregateValue */
   auto MakeAggregateValue(const Tuple *tuple) -> AggregateValue {
     std::vector<Value> vals;
@@ -201,8 +275,8 @@ class AggregationExecutor : public AbstractExecutor {
   /** The child executor that produces tuples over which the aggregation is computed */
   std::unique_ptr<AbstractExecutor> child_;
   /** Simple aggregation hash table */
-  // TODO(Student): Uncomment SimpleAggregationHashTable aht_;
+  SimpleAggregationHashTable aht_;
   /** Simple aggregation hash table iterator */
-  // TODO(Student): Uncomment SimpleAggregationHashTable::Iterator aht_iterator_;
+  SimpleAggregationHashTable::Iterator aht_iterator_;
 };
 }  // namespace bustub
