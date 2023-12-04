@@ -99,7 +99,7 @@ auto NestedLoopJoinExecutor::MakeOutputTuple(Tuple *left_tuple, Tuple *right_tup
       values.push_back(ValueFactory::GetNullValueByType(right_schema.GetColumn(i).GetType()));
     }
     else {
-    values.push_back(right_tuple->GetValue(&right_schema, i));
+      values.push_back(right_tuple->GetValue(&right_schema, i));
     }
   }
 
