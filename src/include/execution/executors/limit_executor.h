@@ -53,5 +53,9 @@ class LimitExecutor : public AbstractExecutor {
   const LimitPlanNode *plan_;
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  std::vector<Tuple> tuples_;
+  size_t current_tuple_idx_;
+  size_t limit_;
 };
 }  // namespace bustub
