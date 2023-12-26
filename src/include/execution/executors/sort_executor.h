@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -22,6 +23,8 @@
 #include "storage/table/tuple.h"
 
 namespace bustub {
+
+using OrderBy = std::pair<OrderByType, AbstractExpressionRef>;
 
 /**
  * The SortExecutor executor executes a sort.
@@ -52,5 +55,21 @@ class SortExecutor : public AbstractExecutor {
  private:
   /** The sort plan node to be executed */
   const SortPlanNode *plan_;
+  std::unique_ptr<AbstractExecutor> child_executor_;
+
+  std::vector<Tuple> tuples_;
+
+  size_t current_tuple_idx_;
+
+  /**
+   * @brief A custom comparator for sorting tuples based on the order_bys.
+   * 
+   * @param a the first tuple.
+   * @param b the second tuple.
+   * @param order_bys a list of order bys containing the order by type and the expression to extract the value from the tuple.
+   * @return true if a should be before b.
+   * @return false if a should be after b.
+   */
+  bool CustomComparator(const Tuple &a, const Tuple &b, const std::vector<OrderBy> &order_bys);
 };
 }  // namespace bustub
