@@ -14,6 +14,8 @@
 
 #include <memory>
 #include <vector>
+#include <queue>
+#include <stack>
 
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
@@ -22,6 +24,8 @@
 #include "storage/table/tuple.h"
 
 namespace bustub {
+
+using OrderBy = std::pair<OrderByType, AbstractExpressionRef>;
 
 /**
  * The TopNExecutor executor executes a topn.
@@ -49,8 +53,37 @@ class TopNExecutor : public AbstractExecutor {
   /** @return The output schema for the topn */
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); }
 
+  /**
+   * A custom comparator for the priority queue.
+   * Reverse the order as we are using priority queue for topn.
+   */
+  struct PriorityQueueComparator {
+    PriorityQueueComparator(TopNExecutor &executor) : executor_(executor) {}
+
+    /**
+     * @brief 
+     * 
+     * @param a 
+     * @param b 
+     * @return true if b has a higher priority than a, i.e. closer to the top. (!!! counterintuitive !!!)
+     * @return false otherwise.
+     */
+    bool operator()(const Tuple &a, const Tuple &b);
+
+    TopNExecutor &executor_;
+  };
+
+  friend struct PriorityQueueComparator;
+
  private:
   /** The topn plan node to be executed */
   const TopNPlanNode *plan_;
+  std::unique_ptr<AbstractExecutor> child_executor_;
+
+  // Using member initializer list to initialize the priority queue with the custom comparator.
+  std::priority_queue<Tuple, std::vector<Tuple>, PriorityQueueComparator> tuple_queue_{PriorityQueueComparator(*this)};
+  std::stack<Tuple> tuple_stack_; // Sorted tuples, use stack to reverse the order from the priority queue.
+
+  size_t limit_;
 };
 }  // namespace bustub
