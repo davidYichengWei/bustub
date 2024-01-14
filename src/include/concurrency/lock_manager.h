@@ -313,6 +313,17 @@ class LockManager {
   auto ValidateLockTableInput(Transaction *txn, LockMode lock_mode) -> void;
 
   /**
+   * @brief Validate the following:
+   *  - the lock_mode is S or X.
+   *  - the lock_mode is compatible with the txn's state and isolation level.
+   *  - the txn holds a lock on the table of the row to be locked.
+   * 
+   * @param txn 
+   * @param lock_mode 
+   */
+  auto ValidateLockRowInput(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid) -> void;
+
+  /**
    * @brief Check if the txn's unlock request is valid, ensure the fllowing:
    *  - the transaction holds a lock on the table.
    *  - the transaction does not hold any lock on the rows of the table.
@@ -321,12 +332,15 @@ class LockManager {
    */
   auto ValidateUnlockTableInput(Transaction *txn, const table_oid_t &oid) -> void;
 
+
+  auto ValidateUnlockRowInput(Transaction *txn, const table_oid_t &oid, const RID &rid) -> void;
+
   /**
    * @brief Check if the upgrade path is valid.
    * 
    * @throw TransactionAbortException(INCOMPATBLE_UPGRADE) if the upgrade path is not valid.
    */
-  auto ValidateLockUpgrade(LockMode src_mode, LockMode dest_mode, txn_id_t txn_id) -> void;
+  auto ValidateLockUpgrade(LockMode src_mode, LockMode dest_mode, Transaction *txn) -> void;
 
   /**
    * @brief Implement the compatibility matrix.
@@ -337,7 +351,7 @@ class LockManager {
   auto CheckLockCompatibility(LockMode mode_1, LockMode mode_2) -> bool;
 
   /**
-   * @brief Try to grant lock to the LockRequest of the txn in the lock_request_queue.
+   * @brief Try to grant table lock to the LockRequest of the txn in the lock_request_queue.
    * 
    * Return false if:
    *  - the lock_mode is incompatible with ANY granted lock in the lock_request_queue, OR
@@ -357,6 +371,13 @@ class LockManager {
    * @return false otherwise.
    */
   auto GrantTableLock(Transaction *txn, LockMode lock_mode, LockRequestQueue *lock_request_queue) -> bool;
+
+  auto GrantRowLock(Transaction *txn, LockMode lock_mode, LockRequestQueue *lock_request_queue) -> bool;
+
+  auto AbortTransaction(Transaction *txn, AbortReason reason) -> void {
+    txn->SetState(TransactionState::ABORTED);
+    throw TransactionAbortException(txn->GetTransactionId(), reason);
+  }
 
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
