@@ -64,13 +64,20 @@ class LockManager {
   class LockRequestQueue {
    public:
     /** List of lock requests for the same resource (table or row) */
-    std::list<LockRequest *> request_queue_;
+    std::list<std::unique_ptr<LockRequest>> request_queue_;
     /** For notifying blocked transactions on this rid */
     std::condition_variable cv_;
     /** txn_id of an upgrading transaction (if any) */
     txn_id_t upgrading_ = INVALID_TXN_ID;
     /** coordination */
     std::mutex latch_;
+
+    // Statistics of granted locks, so we don't need to traverse the queue to get the stats
+    int s_lock_count_{0};
+    int x_lock_count_{0};
+    int is_lock_count_{0};
+    int ix_lock_count_{0};
+    int six_lock_count_{0};
   };
 
   /**
@@ -179,7 +186,7 @@ class LockManager {
    *    row on that table. If the transaction holds locks on rows of the table, Unlock should set the Transaction State
    *    as ABORTED and throw a TransactionAbortException (TABLE_UNLOCKED_BEFORE_UNLOCKING_ROWS).
    *
-   *    Finally, unlocking a resource should also grant any new lock requests for the resource (if possible).
+   *    Finally, unlocking a resource should also grant any new lock requests for the resource (if possible). -- use cv to notify blocked transactions
    *
    * TRANSACTION STATE UPDATE
    *    Unlock should update the transaction state appropriately (depending upon the ISOLATION LEVEL)
@@ -298,6 +305,59 @@ class LockManager {
   auto RunCycleDetection() -> void;
 
  private:
+  /**
+   * @brief Check if the lock_mode is compatible with the txn's state and isolation level.
+   * 
+   * @throw TransactionAbortException to abort the txn if the lock_mode is not compatible.
+   */
+  auto ValidateLockTableInput(Transaction *txn, LockMode lock_mode) -> void;
+
+  /**
+   * @brief Check if the txn's unlock request is valid, ensure the fllowing:
+   *  - the transaction holds a lock on the table.
+   *  - the transaction does not hold any lock on the rows of the table.
+   * 
+   * @throw TransactionAbortException to abort the txn if the unlock request is not valid.
+   */
+  auto ValidateUnlockTableInput(Transaction *txn, const table_oid_t &oid) -> void;
+
+  /**
+   * @brief Check if the upgrade path is valid.
+   * 
+   * @throw TransactionAbortException(INCOMPATBLE_UPGRADE) if the upgrade path is not valid.
+   */
+  auto ValidateLockUpgrade(LockMode src_mode, LockMode dest_mode, txn_id_t txn_id) -> void;
+
+  /**
+   * @brief Implement the compatibility matrix.
+   * 
+   * @return true if the two lock modes are compatible.
+   * @return false otherwise.
+   */
+  auto CheckLockCompatibility(LockMode mode_1, LockMode mode_2) -> bool;
+
+  /**
+   * @brief Try to grant lock to the LockRequest of the txn in the lock_request_queue.
+   * 
+   * Return false if:
+   *  - the lock_mode is incompatible with ANY granted lock in the lock_request_queue, OR
+   *  - the lock_mode is incompatible with ANY lock request in the lock_request_queue that is ahead of the txn's lock request.
+   * 
+   * If the lock can be granted:
+   *  - Change the LockRequest's granted_ to true.
+   *  - Update the lock statistics of the lock_request_queue.
+   *  - Update the txn's lock set.
+   *  - If the txn is upgrading, set the upgrading_ of the lock_request_queue to INVALID_TXN_ID.
+   *  - return true.
+   * 
+   * @param txn the txn requesting the lock.
+   * @param lock_mode the lock mode requested by the txn.
+   * @param lock_request_queue the lock request queue for the resource, latch should have been acquired.
+   * @return true if the lock is granted.
+   * @return false otherwise.
+   */
+  auto GrantTableLock(Transaction *txn, LockMode lock_mode, LockRequestQueue *lock_request_queue) -> bool;
+
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
   std::unordered_map<table_oid_t, std::shared_ptr<LockRequestQueue>> table_lock_map_;
