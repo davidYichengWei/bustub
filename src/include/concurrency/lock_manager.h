@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <set>
 
 #include "common/config.h"
 #include "common/rid.h"
@@ -379,6 +380,35 @@ class LockManager {
     throw TransactionAbortException(txn->GetTransactionId(), reason);
   }
 
+  /**
+   * @brief Clear the existing waits_for_ graph and rebuild it based on table_lock_map_ and row_lock_map_.
+   * 
+   */
+  auto BuildWaitsForGraph() -> void;
+
+  /**
+   * @brief Use DFS to detect cycle in the waits_for_ graph by exploring from vertex v.
+   * If a cycle is detected, store the cycle in the cycle_ vector.
+   * 
+   * @param v the vertex to explore from.
+   * @param visited the set of visited vertices.
+   * @param visiting the set of vertices currently being visited.
+   * @param current_path the current path of the DFS containing visiting vertices.
+   */
+  auto CycleDetectionVisit(txn_id_t v, std::unordered_set<txn_id_t> &visited, std::unordered_set<txn_id_t> &visiting, std::list<txn_id_t> &current_path) -> void;
+
+  /**
+   * @brief Abort the txn with txn_id to break deadlock.
+   * Set the txn's state to ABORTED and lock counts to 0.
+   * Traverse all table and row lock request queues:
+   *  - If the txn has a LockRequest in the queue, remove the request.
+   *    - If the txn is upgrading, set the upgrading_ of the queue to INVALID_TXN_ID.
+   *    - If the LockRequest is granted, update the lock statistics of the queue.
+   * 
+   * @param txn_id the txn to abort.
+   */
+  auto DeadlockAbort(txn_id_t txn_id) -> void;
+
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
   std::unordered_map<table_oid_t, std::shared_ptr<LockRequestQueue>> table_lock_map_;
@@ -394,6 +424,8 @@ class LockManager {
   std::thread *cycle_detection_thread_;
   /** Waits-for graph representation. */
   std::unordered_map<txn_id_t, std::vector<txn_id_t>> waits_for_;
+  std::set<txn_id_t> vertex_set_; // set of vertices with out-degree > 0
+  txn_id_t txn_to_abort_ = INVALID_TXN_ID;
   std::mutex waits_for_latch_;
 };
 

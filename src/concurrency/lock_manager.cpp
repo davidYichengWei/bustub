@@ -104,6 +104,10 @@ auto LockManager::LockTable(Transaction *txn, LockMode lock_mode, const table_oi
     std::unique_lock<std::mutex> lock(lock_request_queue->latch_);
     while (!GrantTableLock(txn, lock_mode, lock_request_queue.get())) {
       lock_request_queue->cv_.wait(lock);
+      // If the txn has been aborted, then return false
+      if (txn->GetState() == TransactionState::ABORTED) {
+        return false;
+      }
     }
   }
 
@@ -112,7 +116,6 @@ auto LockManager::LockTable(Transaction *txn, LockMode lock_mode, const table_oi
 
 auto LockManager::UnlockTable(Transaction *txn, const table_oid_t &oid) -> bool {
   ValidateUnlockTableInput(txn, oid);
-
   // Get the LockRequestQueue for the table
   table_lock_map_latch_.lock();
   auto lock_request_queue = table_lock_map_.at(oid);
@@ -275,6 +278,10 @@ auto LockManager::LockRow(Transaction *txn, LockMode lock_mode, const table_oid_
     std::unique_lock<std::mutex> lock(lock_request_queue->latch_);
     while (!GrantRowLock(txn, lock_mode, lock_request_queue.get())) {
       lock_request_queue->cv_.wait(lock);
+      // If the txn has been aborted, then return false
+      if (txn->GetState() == TransactionState::ABORTED) {
+        return false;
+      }
     }
   }
 
@@ -353,21 +360,211 @@ auto LockManager::UnlockRow(Transaction *txn, const table_oid_t &oid, const RID 
   return true;
 }
 
-void LockManager::AddEdge(txn_id_t t1, txn_id_t t2) {}
+void LockManager::AddEdge(txn_id_t t1, txn_id_t t2) {
+  std::unique_lock<std::mutex> waits_for_latch_;
+  // If t1 already waits for t2, then do nothing
+  for (auto it = waits_for_[t1].begin(); it != waits_for_[t1].end(); it++) {
+    if (*it == t2) {
+      return;
+    }
+  }
 
-void LockManager::RemoveEdge(txn_id_t t1, txn_id_t t2) {}
+  waits_for_[t1].push_back(t2);
+  vertex_set_.insert(t1);
+}
 
-auto LockManager::HasCycle(txn_id_t *txn_id) -> bool { return false; }
+void LockManager::RemoveEdge(txn_id_t t1, txn_id_t t2) {
+  std::unique_lock<std::mutex> waits_for_latch_;
+  if (waits_for_[t1].size() == 0) return;
+  // Locate t2 in waits_for_[t1] and remove it
+  for (auto it = waits_for_[t1].begin(); it != waits_for_[t1].end(); it++) {
+    if (*it == t2) {
+      waits_for_[t1].erase(it);
+      break;
+    }
+  }
+
+  if (waits_for_[t1].size() == 0) {
+    vertex_set_.erase(t1);
+  }
+}
+
+auto LockManager::CycleDetectionVisit(txn_id_t v, std::unordered_set<txn_id_t> &visited, std::unordered_set<txn_id_t> &visiting, std::list<txn_id_t> &current_path) -> void {
+  assert(visited.find(v) == visited.end());
+  assert(visiting.find(v) == visiting.end());
+
+  visiting.insert(v);
+  current_path.push_front(v);
+
+  for (auto u : waits_for_[v]) {
+    // If a cycle is found, just return
+    if (txn_to_abort_ != INVALID_TXN_ID) {
+      return;
+    }
+
+    if (visiting.find(u) != visiting.end()) {
+      // Found a cycle, record it
+      // Traverse current_path to find vertices in the cycle
+      // u should be alreasy in current_path
+      for (auto it = current_path.begin(); it != current_path.end(); it++) {
+        txn_to_abort_ = std::max(txn_to_abort_, *it);
+        if (*it == u) {
+          break;
+        }
+      }
+      break;
+    }
+    else if (visited.find(u) == visited.end()) {
+      CycleDetectionVisit(u, visited, visiting, current_path);
+    }
+  }
+
+  visiting.erase(v);
+  visited.insert(v);
+  current_path.pop_front();
+}
+
+auto LockManager::HasCycle(txn_id_t *txn_id) -> bool {
+  std::unique_lock<std::mutex> waits_for_latch_;
+
+  std::unordered_set<txn_id_t> visited;
+  std::unordered_set<txn_id_t> visiting;
+  std::list<txn_id_t> current_path;
+
+  for (txn_id_t v : vertex_set_) {
+    if (visited.find(v) == visited.end()) {
+      CycleDetectionVisit(v, visited, visiting, current_path);
+    }
+  }
+
+  if (txn_to_abort_ != INVALID_TXN_ID) {
+    *txn_id = txn_to_abort_;
+    return true;
+  }
+  else {
+    return false;
+  }
+}
 
 auto LockManager::GetEdgeList() -> std::vector<std::pair<txn_id_t, txn_id_t>> {
   std::vector<std::pair<txn_id_t, txn_id_t>> edges(0);
+
+  {
+    std::unique_lock<std::mutex> lock(waits_for_latch_);
+    for (auto [src_txn_id, txn_id_list] : waits_for_) {
+      for (auto dest_txn_id : txn_id_list) {
+        edges.push_back(std::make_pair(src_txn_id, dest_txn_id));
+      }
+    }
+  }
+
   return edges;
+}
+
+auto LockManager::DeadlockAbort(txn_id_t txn_id) -> void {
+  Transaction *txn = TransactionManager::GetTransaction(txn_id);
+  txn->LockTxn();
+  txn->SetState(TransactionState::ABORTED);
+
+  // Clear the txn's lock sets
+  txn->GetSharedTableLockSet()->clear();
+  txn->GetExclusiveTableLockSet()->clear();
+  txn->GetIntentionSharedTableLockSet()->clear();
+  txn->GetIntentionExclusiveTableLockSet()->clear();
+  txn->GetSharedIntentionExclusiveTableLockSet()->clear();
+  txn->GetSharedRowLockSet()->clear();
+  txn->GetExclusiveRowLockSet()->clear();
+  txn->UnlockTxn();
+
+  // Traverse all row lock request queues to release resources and notify waiting threads
+  row_lock_map_latch_.lock();
+  for (auto [rid, lock_request_queue] : row_lock_map_) {
+    std::unique_lock<std::mutex> lock(lock_request_queue->latch_);
+    for (auto it = lock_request_queue->request_queue_.begin(); it != lock_request_queue->request_queue_.end(); it++) {
+      LockRequest *existing_request = it->get();
+      if (existing_request->txn_id_ == txn_id) {
+        // If the request is granted, then we need to update the lock counts and the txn's lock set
+        if (existing_request->granted_) {
+          switch (existing_request->lock_mode_) {
+            case LockMode::SHARED:
+              lock_request_queue->s_lock_count_--;
+              break;
+            case LockMode::EXCLUSIVE:
+              lock_request_queue->x_lock_count_--;
+              break;
+            default:
+              throw std::runtime_error("Invalid lock mode");
+          }
+        }
+        // If the request is upgrading, then we need to set the upgrading_ of the LockRequestQueue to INVALID_TXN_ID
+        if (lock_request_queue->upgrading_ == txn_id) {
+          lock_request_queue->upgrading_ = INVALID_TXN_ID;
+        }
+        lock_request_queue->request_queue_.erase(it);
+
+        // Notify threads waiting on the lock
+        lock_request_queue->cv_.notify_all();
+        break;
+      }
+    }
+  }
+  row_lock_map_latch_.unlock();
+
+  // Traverse all table lock request queues to release resources and notify waiting threads
+  table_lock_map_latch_.lock();
+  for (auto [oid, lock_request_queue] : table_lock_map_) {
+    std::unique_lock<std::mutex> lock(lock_request_queue->latch_);
+    for (auto it = lock_request_queue->request_queue_.begin(); it != lock_request_queue->request_queue_.end(); it++) {
+      LockRequest *existing_request = it->get();
+      if (existing_request->txn_id_ == txn_id) {
+        // If the request is granted, then we need to update the lock counts and the txn's lock set
+        if (existing_request->granted_) {
+          switch (existing_request->lock_mode_) {
+            case LockMode::SHARED:
+              lock_request_queue->s_lock_count_--;
+              break;
+            case LockMode::EXCLUSIVE:
+              lock_request_queue->x_lock_count_--;
+              break;
+            case LockMode::INTENTION_SHARED:
+              lock_request_queue->is_lock_count_--;
+              break;
+            case LockMode::INTENTION_EXCLUSIVE:
+              lock_request_queue->ix_lock_count_--;
+              break;
+            case LockMode::SHARED_INTENTION_EXCLUSIVE:
+              lock_request_queue->six_lock_count_--;
+              break;
+            default:
+              throw std::runtime_error("Invalid lock mode");
+          }
+        }
+        // If the request is upgrading, then we need to set the upgrading_ of the LockRequestQueue to INVALID_TXN_ID
+        if (lock_request_queue->upgrading_ == txn_id) {
+          lock_request_queue->upgrading_ = INVALID_TXN_ID;
+        }
+        lock_request_queue->request_queue_.erase(it);
+
+        // Notify threads waiting on the lock
+        lock_request_queue->cv_.notify_all();
+        break;
+      }
+    }
+  }
+  table_lock_map_latch_.unlock();
 }
 
 void LockManager::RunCycleDetection() {
   while (enable_cycle_detection_) {
     std::this_thread::sleep_for(cycle_detection_interval);
-    {  // TODO(students): detect deadlock
+
+    BuildWaitsForGraph();
+    txn_id_t txn_to_abort = INVALID_TXN_ID;
+    while (HasCycle(&txn_to_abort)) {
+      // Abort the youngest txn in the cycle
+      DeadlockAbort(txn_to_abort);
+      // Update the waits-for graph and run cycle detection again
+      BuildWaitsForGraph();
     }
   }
 }
@@ -692,6 +889,60 @@ auto LockManager::GrantRowLock(Transaction *txn, LockMode lock_mode, LockRequest
   }
 
   return true;
+}
+
+auto LockManager::BuildWaitsForGraph() -> void {
+  std::unique_lock<std::mutex> lock(waits_for_latch_);
+  std::unique_lock<std::mutex> table_lock_map_lock(table_lock_map_latch_);
+  std::unique_lock<std::mutex> row_lock_map_lock(row_lock_map_latch_);
+  waits_for_.clear();
+  vertex_set_.clear();
+  txn_to_abort_ = INVALID_TXN_ID;
+
+  for (auto [oid, request_queue] : table_lock_map_) {
+    /**
+     * Algorithm:
+     * Traverse the queue and build 2 sets with txn ids of granted and waiting txns.
+     * For each txn in the waiting set, add an edge from each txn in the granted set to the txn in the waiting set.
+     */
+    std::unordered_set<txn_id_t> granted_set;
+    std::unordered_set<txn_id_t> waiting_set;
+    for (auto it = request_queue->request_queue_.begin(); it != request_queue->request_queue_.end(); it++) {
+      LockRequest *lock_request = it->get();
+      if (lock_request->granted_) {
+        granted_set.insert(lock_request->txn_id_);
+      }
+      else {
+        waiting_set.insert(lock_request->txn_id_);
+      }
+    }
+
+    for (auto waiting_txn_id : waiting_set) {
+      for (auto granted_txn_id : granted_set) {
+        AddEdge(granted_txn_id, waiting_txn_id);
+      }
+    }
+  }
+
+  for (auto [rid, request_queue] : row_lock_map_) {
+    std::unordered_set<txn_id_t> granted_set;
+    std::unordered_set<txn_id_t> waiting_set;
+    for (auto it = request_queue->request_queue_.begin(); it != request_queue->request_queue_.end(); it++) {
+      LockRequest *lock_request = it->get();
+      if (lock_request->granted_) {
+        granted_set.insert(lock_request->txn_id_);
+      }
+      else {
+        waiting_set.insert(lock_request->txn_id_);
+      }
+    }
+
+    for (auto waiting_txn_id : waiting_set) {
+      for (auto granted_txn_id : granted_set) {
+        AddEdge(granted_txn_id, waiting_txn_id);
+      }
+    }
+  }
 }
 
 }  // namespace bustub
