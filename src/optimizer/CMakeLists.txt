@@ -10,6 +10,7 @@ add_library(
     optimizer.cpp
     optimizer_custom_rules.cpp
     order_by_index_scan.cpp
+    join_reordering.cpp
     sort_limit_as_topn.cpp)
 
 set(ALL_OBJECT_FILES

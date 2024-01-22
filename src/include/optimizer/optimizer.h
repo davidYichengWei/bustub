@@ -10,6 +10,7 @@
 #include "catalog/catalog.h"
 #include "concurrency/transaction.h"
 #include "execution/expressions/abstract_expression.h"
+#include "execution/expressions/column_value_expression.h"
 #include "execution/plans/abstract_plan.h"
 
 #define BUSTUB_OPTIMIZER_HACK_REMOVE_AFTER_2022_FALL
@@ -94,6 +95,16 @@ class Optimizer {
    */
   auto OptimizeSortLimitAsTopN(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
+	/**
+	 * @brief Optimize joins by reordering the tables:
+	 *  - If only one table has an index, put it as the inner table (right table).
+	 *  - Otherwise, put the smaller table as the outer table (left table).
+	 * 
+	 * @param plan 
+	 * @return AbstractPlanNodeRef 
+	 */
+  auto JoinReordering(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
+
   /**
    * @brief get the estimated cardinality for a table based on the table name. Useful when join reordering. BusTub
    * doesn't support statistics for now, so it's the only way for you to get the table size :(
@@ -102,6 +113,8 @@ class Optimizer {
    * @return std::optional<size_t>
    */
   auto EstimatedCardinality(const std::string &table_name) -> std::optional<size_t>;
+
+	auto HasIndex(AbstractPlanNodeRef plan, const ColumnValueExpression *expr) -> bool;
 
   /** Catalog will be used during the planning process. USERS SHOULD ENSURE IT OUTLIVES
    * OPTIMIZER, otherwise it's a dangling reference.

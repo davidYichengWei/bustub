@@ -40,16 +40,24 @@ auto Optimizer::OptimizeNLJAsIndexJoin(const AbstractPlanNodeRef &plan) -> Abstr
   auto optimized_plan = plan->CloneWithChildren(std::move(children));
 
   if (optimized_plan->GetType() == PlanType::NestedLoopJoin) {
+    LOG_INFO("Optimizing NLJ as IndexJoin");
     const auto &nlj_plan = dynamic_cast<const NestedLoopJoinPlanNode &>(*optimized_plan);
+    // Print the type of the left and right children
+    LOG_INFO("Left child type: %d", nlj_plan.GetLeftPlan()->GetType());
+    LOG_INFO("Right child type: %d", nlj_plan.GetRightPlan()->GetType());
     // Has exactly two children
     BUSTUB_ENSURE(nlj_plan.children_.size() == 2, "NLJ should have exactly 2 children.");
     // Check if expr is equal condition where one is for the left table, and one is for the right table.
     if (const auto *expr = dynamic_cast<const ComparisonExpression *>(&nlj_plan.Predicate()); expr != nullptr) {
+      LOG_DEBUG("111");
       if (expr->comp_type_ == ComparisonType::Equal) {
+        LOG_DEBUG("222");
         if (const auto *left_expr = dynamic_cast<const ColumnValueExpression *>(expr->children_[0].get());
             left_expr != nullptr) {
+              LOG_DEBUG("333");
           if (const auto *right_expr = dynamic_cast<const ColumnValueExpression *>(expr->children_[1].get());
               right_expr != nullptr) {
+                LOG_DEBUG("444");
             // Ensure both exprs have tuple_id == 0
             auto left_expr_tuple_0 =
                 std::make_shared<ColumnValueExpression>(0, left_expr->GetColIdx(), left_expr->GetReturnType());
@@ -58,7 +66,10 @@ auto Optimizer::OptimizeNLJAsIndexJoin(const AbstractPlanNodeRef &plan) -> Abstr
             // Now it's in form of <column_expr> = <column_expr>. Let's match an index for them.
 
             // Ensure right child is table scan
+            // Note: this optimization only uses index on the right table (inner table)
+            LOG_DEBUG("before check right child is table scan");
             if (nlj_plan.GetRightPlan()->GetType() == PlanType::SeqScan) {
+              LOG_INFO("Right child is SeqScan");
               const auto &right_seq_scan = dynamic_cast<const SeqScanPlanNode &>(*nlj_plan.GetRightPlan());
               if (left_expr->GetTupleIdx() == 0 && right_expr->GetTupleIdx() == 1) {
                 if (auto index = MatchIndex(right_seq_scan.table_name_, right_expr->GetColIdx());
