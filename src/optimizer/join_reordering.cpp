@@ -52,7 +52,6 @@ auto Optimizer::JoinReordering(const AbstractPlanNodeRef &plan) -> AbstractPlanN
 	if (right_plan->GetType() != PlanType::SeqScan && right_plan->GetType() != PlanType::MockScan) {
 		return optimized_plan;
 	}
-	LOG_INFO("Reordering NLJ");
 	
 	// Check if expr is equal condition
 	auto expr = dynamic_cast<const ComparisonExpression *>(&nlj_plan.Predicate());
@@ -66,6 +65,10 @@ auto Optimizer::JoinReordering(const AbstractPlanNodeRef &plan) -> AbstractPlanN
 		return optimized_plan;
 	}
 
+	// Add a shared_ptr wrapper to left_expr and right_expr.
+	auto left_expr_shared = std::make_shared<ColumnValueExpression>(*left_expr);
+	auto right_expr_shared = std::make_shared<ColumnValueExpression>(*right_expr);
+
 	auto left_expr_tuple_0 = std::make_shared<ColumnValueExpression>(0, left_expr->GetColIdx(), left_expr->GetReturnType());
 	auto right_expr_tuple_0 = std::make_shared<ColumnValueExpression>(0, right_expr->GetColIdx(), right_expr->GetReturnType());
 
@@ -75,9 +78,8 @@ auto Optimizer::JoinReordering(const AbstractPlanNodeRef &plan) -> AbstractPlanN
 	}
 	// If only left table has index, swap the left and right table.
 	if (HasIndex(left_plan, left_expr) && !HasIndex(right_plan, right_expr)) {
-		LOG_INFO("Only left table has index, swap the left and right table.");
-		return std::make_shared<NestedLoopJoinPlanNode>(std::make_shared<Schema>(NestedLoopJoinPlanNode::InferJoinSchema(*right_plan, *left_plan)), std::move(right_plan), std::move(left_plan), 
-			std::make_shared<ConstantValueExpression>(ValueFactory::GetBooleanValue(true)), nlj_plan.GetJoinType());
+		return std::make_shared<NestedLoopJoinPlanNode>(std::make_shared<Schema>(NestedLoopJoinPlanNode::InferJoinSchema(*right_plan, *left_plan)), right_plan, left_plan, 
+			std::make_shared<ComparisonExpression>(std::move(right_expr_shared), std::move(left_expr_shared), ComparisonType::Equal), nlj_plan.GetJoinType());
 	}
 
 	// Choose the smaller table as the left table.
@@ -104,8 +106,8 @@ auto Optimizer::JoinReordering(const AbstractPlanNodeRef &plan) -> AbstractPlanN
 	BUSTUB_ASSERT(right_table_size.has_value(), "right table size should have value");
 
 	if (left_table_size.value() > right_table_size.value()) {
-		return std::make_shared<NestedLoopJoinPlanNode>(nlj_plan.output_schema_, right_plan, left_plan, 
-			std::make_shared<ConstantValueExpression>(ValueFactory::GetBooleanValue(true)), nlj_plan.GetJoinType());
+		return std::make_shared<NestedLoopJoinPlanNode>(std::make_shared<Schema>(NestedLoopJoinPlanNode::InferJoinSchema(*right_plan, *left_plan)), right_plan, left_plan, 
+			std::make_shared<ComparisonExpression>(std::move(right_expr_shared), std::move(left_expr_shared), ComparisonType::Equal), nlj_plan.GetJoinType());
 	}
 
 	return optimized_plan;
