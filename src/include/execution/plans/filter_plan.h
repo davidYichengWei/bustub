@@ -43,6 +43,8 @@ class FilterPlanNode : public AbstractPlanNode {
   /** @return The predicate to test tuples against; tuples should only be returned if they evaluate to true */
   auto GetPredicate() const -> const AbstractExpressionRef & { return predicate_; }
 
+  auto SetPredicate(AbstractExpressionRef predicate) -> void { predicate_ = std::move(predicate); }
+
   /** @return The child plan node */
   auto GetChildPlan() const -> AbstractPlanNodeRef {
     BUSTUB_ASSERT(GetChildren().size() == 1, "Filter should have exactly one child plan.");

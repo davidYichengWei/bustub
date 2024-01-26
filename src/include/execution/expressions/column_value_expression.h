@@ -48,6 +48,8 @@ class ColumnValueExpression : public AbstractExpression {
   auto GetTupleIdx() const -> uint32_t { return tuple_idx_; }
   auto GetColIdx() const -> uint32_t { return col_idx_; }
 
+  auto SetColIdx(uint32_t col_idx) const -> void { col_idx_ = col_idx; } // hack
+
   /** @return the string representation of the plan node and its children */
   auto ToString() const -> std::string override { return fmt::format("#{}.{}", tuple_idx_, col_idx_); }
 
@@ -57,6 +59,6 @@ class ColumnValueExpression : public AbstractExpression {
   /** Tuple index 0 = left side of join, tuple index 1 = right side of join */
   uint32_t tuple_idx_;
   /** Column index refers to the index within the schema of the tuple, e.g. schema {A,B,C} has indexes {0,1,2} */
-  uint32_t col_idx_;
+  mutable uint32_t col_idx_; // hack
 };
 }  // namespace bustub

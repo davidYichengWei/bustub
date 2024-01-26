@@ -101,18 +101,17 @@ class HashJoinExecutor : public AbstractExecutor {
   /** The NestedLoopJoin plan node to be executed. */
   const HashJoinPlanNode *plan_;
 
-  [[maybe_unused]] ExecutorContext *exec_ctx_;
   std::unique_ptr<AbstractExecutor> left_executor_;
   std::unique_ptr<AbstractExecutor> right_executor_;
 
   // Build hash table for the right table.
   std::unordered_map<HashKey, std::vector<Tuple>> hash_table_;
-  [[maybe_unused]] size_t right_tuple_index_ = 0;
+  size_t right_tuple_index_ = 0;
 
   Tuple current_left_tuple_;
   RID current_left_rid_;
   HashKey current_left_key_;
-  [[maybe_unused]] bool any_match_in_current_left_tuple_ = false;
+  bool any_match_in_current_left_tuple_ = false;
   bool left_exausted_ = false;
 
   // For extracting join key

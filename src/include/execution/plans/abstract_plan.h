@@ -81,6 +81,9 @@ class AbstractPlanNode {
   /** @return the children of this plan node */
   auto GetChildren() const -> const std::vector<AbstractPlanNodeRef> & { return children_; }
 
+  // const set here as a hack
+  auto SetChildAt(AbstractPlanNodeRef plan, uint32_t child_idx) const -> void { children_[child_idx] = std::move(plan); }
+
   /** @return the type of this plan node */
   virtual auto GetType() const -> PlanType = 0;
 
@@ -103,7 +106,7 @@ class AbstractPlanNode {
   SchemaRef output_schema_;
 
   /** The children of this plan node. */
-  std::vector<AbstractPlanNodeRef> children_;
+  mutable std::vector<AbstractPlanNodeRef> children_; // mutable because of the const hack
 
  protected:
   /** @return the string representation of the plan node itself */

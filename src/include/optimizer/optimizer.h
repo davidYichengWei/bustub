@@ -99,11 +99,13 @@ class Optimizer {
 	 * @brief Optimize joins by reordering the tables:
 	 *  - If only one table has an index, put it as the inner table (right table).
 	 *  - Otherwise, put the smaller table as the outer table (left table).
-	 * 
-	 * @param plan 
-	 * @return AbstractPlanNodeRef 
 	 */
   auto JoinReordering(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
+
+  /**
+   * @brief Push predicates in a NLJ node down to the SeqScan/MockScan plan nodes they belong to as FilterPlanNode.
+   */
+  auto PredicatePushdown(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
   /**
    * @brief get the estimated cardinality for a table based on the table name. Useful when join reordering. BusTub

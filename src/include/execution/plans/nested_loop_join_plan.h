@@ -57,6 +57,11 @@ class NestedLoopJoinPlanNode : public AbstractPlanNode {
   /** @return The right plan node of the nested loop join */
   auto GetRightPlan() const -> AbstractPlanNodeRef { return GetChildAt(1); }
 
+  // Note: const set here because I cannot get a non-const reference to the plan
+  auto SetLeftPlan(AbstractPlanNodeRef plan) const -> void { SetChildAt(std::move(plan), 0); }
+
+  auto SetRightPlan(AbstractPlanNodeRef plan) const -> void { SetChildAt(std::move(plan), 1); }
+
   static auto InferJoinSchema(const AbstractPlanNode &left, const AbstractPlanNode &right) -> Schema;
 
   BUSTUB_PLAN_NODE_CLONE_WITH_CHILDREN(NestedLoopJoinPlanNode);

@@ -10,6 +10,7 @@ namespace bustub {
 auto Optimizer::OptimizeCustom(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef {
   auto p = plan;
   p = OptimizeMergeProjection(p);
+  p = PredicatePushdown(p);
   p = OptimizeMergeFilterNLJ(p);
   p = JoinReordering(p);
   // p = OptimizeNLJAsIndexJoin(p); // Hash join is faster than index join

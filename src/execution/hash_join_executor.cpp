@@ -20,7 +20,7 @@ namespace bustub {
 HashJoinExecutor::HashJoinExecutor(ExecutorContext *exec_ctx, const HashJoinPlanNode *plan,
                                    std::unique_ptr<AbstractExecutor> &&left_child,
                                    std::unique_ptr<AbstractExecutor> &&right_child)
-    : AbstractExecutor(exec_ctx), plan_(plan), exec_ctx_(exec_ctx), left_executor_(std::move(left_child)),
+    : AbstractExecutor(exec_ctx), plan_(plan), left_executor_(std::move(left_child)),
       right_executor_(std::move(right_child)) {
   if (plan->GetJoinType() != JoinType::LEFT && plan->GetJoinType() != JoinType::INNER) {
     // Note for 2022 Fall: You ONLY need to implement left join and inner join.

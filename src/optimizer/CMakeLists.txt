@@ -11,6 +11,7 @@ add_library(
     optimizer_custom_rules.cpp
     order_by_index_scan.cpp
     join_reordering.cpp
+    predicate_pushdown.cpp
     sort_limit_as_topn.cpp)
 
 set(ALL_OBJECT_FILES
