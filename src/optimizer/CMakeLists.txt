@@ -12,6 +12,7 @@ add_library(
     order_by_index_scan.cpp
     join_reordering.cpp
     predicate_pushdown.cpp
+    prune_nlj.cpp
     sort_limit_as_topn.cpp)
 
 set(ALL_OBJECT_FILES

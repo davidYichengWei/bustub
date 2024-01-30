@@ -108,6 +108,17 @@ class Optimizer {
   auto PredicatePushdown(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
   /**
+   * @brief If one child of NLJ has a filter that always evaluates to false, we can replace NLJ with its other child.
+   * 
+   * @param plan 
+   * @return AbstractPlanNodeRef 
+   */
+  auto PruneNLJ(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
+
+
+  auto ColumnPruning(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
+
+  /**
    * @brief get the estimated cardinality for a table based on the table name. Useful when join reordering. BusTub
    * doesn't support statistics for now, so it's the only way for you to get the table size :(
    *
