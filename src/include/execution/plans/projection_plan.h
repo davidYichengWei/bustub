@@ -51,13 +51,17 @@ class ProjectionPlanNode : public AbstractPlanNode {
   /** @return Projection expressions */
   auto GetExpressions() const -> const std::vector<AbstractExpressionRef> & { return expressions_; }
 
+  auto GetMutableExpressions() const -> std::vector<AbstractExpressionRef> & { return expressions_; }
+
+  auto SetExpressions(std::vector<AbstractExpressionRef> expressions) const -> void { expressions_ = std::move(expressions); }
+
   static auto InferProjectionSchema(const std::vector<AbstractExpressionRef> &expressions) -> Schema;
 
   static auto RenameSchema(const Schema &schema, const std::vector<std::string> &col_names) -> Schema;
 
   BUSTUB_PLAN_NODE_CLONE_WITH_CHILDREN(ProjectionPlanNode);
 
-  std::vector<AbstractExpressionRef> expressions_;
+  mutable std::vector<AbstractExpressionRef> expressions_;
 
  protected:
   auto PlanNodeToString() const -> std::string override;

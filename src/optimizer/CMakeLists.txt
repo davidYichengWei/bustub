@@ -13,6 +13,7 @@ add_library(
     join_reordering.cpp
     predicate_pushdown.cpp
     prune_nlj.cpp
+    column_pruning.cpp
     sort_limit_as_topn.cpp)
 
 set(ALL_OBJECT_FILES

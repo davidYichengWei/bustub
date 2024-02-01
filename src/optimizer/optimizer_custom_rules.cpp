@@ -11,6 +11,7 @@ auto Optimizer::OptimizeCustom(const AbstractPlanNodeRef &plan) -> AbstractPlanN
   auto p = plan;
   p = OptimizeMergeProjection(p);
   p = PruneNLJ(p);
+  p = ColumnPruning(p);
   p = PredicatePushdown(p);
   p = OptimizeMergeFilterNLJ(p);
   p = JoinReordering(p);

@@ -72,8 +72,12 @@ class AggregationPlanNode : public AbstractPlanNode {
   /** @return The aggregate expressions */
   auto GetAggregates() const -> const std::vector<AbstractExpressionRef> & { return aggregates_; }
 
+  auto SetAggregates(std::vector<AbstractExpressionRef> aggregates) const -> void { aggregates_ = std::move(aggregates); }
+
   /** @return The aggregate types */
   auto GetAggregateTypes() const -> const std::vector<AggregationType> & { return agg_types_; }
+
+  auto SetAggregateTypes(std::vector<AggregationType> agg_types) const -> void { agg_types_ = std::move(agg_types); }
 
   static auto InferAggSchema(const std::vector<AbstractExpressionRef> &group_bys,
                              const std::vector<AbstractExpressionRef> &aggregates,
@@ -84,9 +88,9 @@ class AggregationPlanNode : public AbstractPlanNode {
   /** The GROUP BY expressions */
   std::vector<AbstractExpressionRef> group_bys_;
   /** The aggregation expressions */
-  std::vector<AbstractExpressionRef> aggregates_;
+  mutable std::vector<AbstractExpressionRef> aggregates_;
   /** The aggregation types */
-  std::vector<AggregationType> agg_types_;
+  mutable std::vector<AggregationType> agg_types_;
 
  protected:
   auto PlanNodeToString() const -> std::string override;

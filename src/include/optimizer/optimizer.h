@@ -115,7 +115,15 @@ class Optimizer {
    */
   auto PruneNLJ(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
-
+  /**
+   * @brief Prune columns that are not used in the final output.
+   * 
+   * - If a projection has a child plan who is also a projection, only keep the columns needed by the outer projection in the child projection, and discard the outer projection.
+   * - If a projection has a child plan who is an aggregation, also prune the aggregation.
+   * 
+   * @param plan 
+   * @return AbstractPlanNodeRef 
+   */
   auto ColumnPruning(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
   /**
